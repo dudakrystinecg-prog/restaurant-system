@@ -1,0 +1,3146 @@
+const fs = require("fs");
+const path = require("path");
+const Database = require("better-sqlite3");
+const { hashPin, verifyPin } = require("./security");
+const config = require("./config");
+const {
+  COUNTRY: PAYROLL_COUNTRY,
+  PROVINCE: PAYROLL_PROVINCE,
+  TAX_YEAR: PAYROLL_TAX_YEAR,
+  PAY_FREQUENCIES,
+  DEFAULT_PAY_FREQUENCY,
+  getPayFrequencyConfig,
+  calculateAlbertaPayrollDeductions2026,
+} = require("./payrollRules/canada/2026/alberta");
+
+const dataDirectory = path.join(__dirname, "data");
+const databasePath = path.resolve(config.databasePath);
+const databaseDirectory = path.dirname(databasePath);
+
+if (!fs.existsSync(databaseDirectory)) {
+  fs.mkdirSync(databaseDirectory, { recursive: true });
+}
+
+const db = new Database(databasePath);
+
+const PAYROLL_OVERTIME_RULE = {
+  type: "daily",
+  regularHoursPerDay: 8,
+  overtimeMultiplier: 1.5,
+};
+
+const HOLIDAY_PAY_RULE = {
+  type: "hours_or_manual_amount",
+  multiplier: 1.5,
+  description:
+    "Holiday pay can be entered as a manual amount or derived from holiday hours at 1.5x the hourly rate. Use it for Family Day, general holiday pay, or other extra holiday earnings paid in the current period.",
+};
+const VACATION_PAY_SCHEDULES = {
+  monthly: {
+    code: "monthly",
+    label: "Monthly payout",
+  },
+  accrued: {
+    code: "accrued",
+    label: "Accrued balance",
+  },
+};
+const DEFAULT_VACATION_PAY_SCHEDULE = "monthly";
+const VACATION_PAY_RULE = {
+  type: "service_based_percentage",
+  underFiveYearsRate: 0.04,
+  fiveYearsOrMoreRate: 0.06,
+  description:
+    "Vacation pay is calculated at 4% for employees with less than 5 years of service and 6% after 5 years. Monthly schedules include vacation pay in the current payroll. Accrued schedules store the value in the employee vacation balance and exclude it from the current payout.",
+};
+const DEFAULT_AUDIT_PAGE_SIZE = 10;
+const MAX_AUDIT_PAGE_SIZE = 100;
+
+function calculatePayrollDeductions({
+  grossPayTotal,
+  payFrequency,
+  ytd,
+}) {
+  return calculateAlbertaPayrollDeductions2026({
+    grossPayTotal,
+    payFrequency,
+    ytd,
+  });
+}
+
+function roundMoney(value) {
+  return Number((Number(value || 0)).toFixed(2));
+}
+
+function calculateEmployerContributions({ cppEmployee, eiEmployee }) {
+  return {
+    cpp_employer: roundMoney(cppEmployee),
+    ei_employer: roundMoney(eiEmployee * 1.4),
+  };
+}
+
+function calculateHolidayPayAmount({ holidayPay, holidayHours, hourlyRate }) {
+  if (holidayPay !== undefined && holidayPay !== null && holidayPay !== "") {
+    return roundMoney(Number(holidayPay));
+  }
+
+  return roundMoney(
+    Number(holidayHours || 0) *
+      Number(hourlyRate || 0) *
+      HOLIDAY_PAY_RULE.multiplier,
+  );
+}
+
+function buildChequeNumber(prefix, itemIndex) {
+  if (!prefix) {
+    return null;
+  }
+
+  return `${prefix}-${String(itemIndex + 1).padStart(3, "0")}`;
+}
+
+function normalizeVacationPaySchedule(value) {
+  return VACATION_PAY_SCHEDULES[value]
+    ? value
+    : DEFAULT_VACATION_PAY_SCHEDULE;
+}
+
+function getYearsOfService(startDate, referenceDate) {
+  if (!startDate || !referenceDate) {
+    return 0;
+  }
+
+  const start = new Date(`${startDate}T00:00:00`);
+  const reference = new Date(`${referenceDate}T00:00:00`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(reference.getTime())) {
+    return 0;
+  }
+
+  let years = reference.getUTCFullYear() - start.getUTCFullYear();
+  const referenceMonth = reference.getUTCMonth();
+  const startMonth = start.getUTCMonth();
+
+  if (
+    referenceMonth < startMonth ||
+    (referenceMonth === startMonth && reference.getUTCDate() < start.getUTCDate())
+  ) {
+    years -= 1;
+  }
+
+  return Math.max(0, years);
+}
+
+function getVacationRateForServiceYears(yearsOfService) {
+  return yearsOfService >= 5
+    ? VACATION_PAY_RULE.fiveYearsOrMoreRate
+    : VACATION_PAY_RULE.underFiveYearsRate;
+}
+
+function calculateVacationPayForEmployee({
+  startDate,
+  payrollEndDate,
+  vacationPaySchedule,
+  baseGrossPay,
+}) {
+  const normalizedSchedule = normalizeVacationPaySchedule(vacationPaySchedule);
+  const yearsOfService = getYearsOfService(startDate, payrollEndDate);
+  const vacationRate = getVacationRateForServiceYears(yearsOfService);
+  const vacationPay = roundMoney(baseGrossPay * vacationRate);
+  const vacationPayout =
+    normalizedSchedule === "monthly" ? vacationPay : 0;
+  const vacationAccrued =
+    normalizedSchedule === "accrued" ? vacationPay : 0;
+
+  return {
+    years_of_service: yearsOfService,
+    vacation_rate: vacationRate,
+    vacation_pay: vacationPay,
+    vacation_payout: vacationPayout,
+    vacation_accrued: vacationAccrued,
+    vacation_pay_schedule: normalizedSchedule,
+  };
+}
+
+function ensureColumnExists(tableName, columnName, columnDefinition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const hasColumn = columns.some((column) => column.name === columnName);
+
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+  }
+}
+
+function initializeDatabase() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      pin TEXT NOT NULL,
+      pin_hash TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      federal_claim_amount REAL,
+      provincial_claim_amount REAL,
+      default_hourly_rate REAL,
+      default_pay_frequency TEXT,
+      start_date TEXT,
+      vacation_pay_schedule TEXT NOT NULL DEFAULT 'monthly',
+      accrued_vacation_balance REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS time_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('check-in', 'check-out')),
+      entry_mode TEXT NOT NULL DEFAULT 'clock',
+      manual_category TEXT NOT NULL DEFAULT 'regular',
+      recorded_at TEXT NOT NULL,
+      worked_hours REAL NOT NULL DEFAULT 0,
+      note TEXT,
+      holiday_label TEXT,
+      holiday_multiplier REAL NOT NULL DEFAULT 1.5,
+      kiosk_id TEXT,
+      created_manually INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT,
+      deleted_at TEXT,
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS employee_audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      changed_at TEXT NOT NULL,
+      changed_fields TEXT,
+      admin_user TEXT,
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER NOT NULL,
+      employee_id INTEGER,
+      action TEXT NOT NULL,
+      changed_at TEXT NOT NULL,
+      changed_fields TEXT,
+      admin_user TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      token TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_login_attempts (
+      ip_address TEXT PRIMARY KEY,
+      attempts_count INTEGER NOT NULL,
+      window_start TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payroll_periods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      pay_date TEXT,
+      wage_rate_label TEXT,
+      cheque_number_prefix TEXT,
+      country TEXT NOT NULL DEFAULT 'CA',
+      province TEXT NOT NULL DEFAULT 'AB',
+      tax_year INTEGER NOT NULL DEFAULT 2026,
+      pay_frequency TEXT NOT NULL DEFAULT 'biweekly',
+      pay_periods_per_year INTEGER NOT NULL DEFAULT 26,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payroll_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      payroll_period_id INTEGER NOT NULL,
+      employee_id INTEGER NOT NULL,
+      employee_name TEXT NOT NULL,
+      total_hours REAL NOT NULL,
+      hourly_rate REAL NOT NULL,
+      gross_pay REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (payroll_period_id) REFERENCES payroll_periods (id),
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
+  `);
+
+  ensureColumnExists("time_records", "created_manually", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumnExists("time_records", "updated_at", "TEXT");
+  ensureColumnExists("time_records", "deleted_at", "TEXT");
+  ensureColumnExists(
+    "time_records",
+    "entry_mode",
+    "TEXT NOT NULL DEFAULT 'clock'",
+  );
+  ensureColumnExists(
+    "time_records",
+    "worked_hours",
+    "REAL NOT NULL DEFAULT 0",
+  );
+  ensureColumnExists("time_records", "note", "TEXT");
+  ensureColumnExists(
+    "time_records",
+    "manual_category",
+    "TEXT NOT NULL DEFAULT 'regular'",
+  );
+  ensureColumnExists("time_records", "holiday_label", "TEXT");
+  ensureColumnExists(
+    "time_records",
+    "holiday_multiplier",
+    "REAL NOT NULL DEFAULT 1.5",
+  );
+  ensureColumnExists("employees", "federal_claim_amount", "REAL");
+  ensureColumnExists("employees", "provincial_claim_amount", "REAL");
+  ensureColumnExists("employees", "default_hourly_rate", "REAL");
+  ensureColumnExists("employees", "default_pay_frequency", "TEXT");
+  ensureColumnExists("employees", "pin_hash", "TEXT");
+  ensureColumnExists("employees", "start_date", "TEXT");
+  ensureColumnExists(
+    "employees",
+    "vacation_pay_schedule",
+    "TEXT NOT NULL DEFAULT 'monthly'",
+  );
+  ensureColumnExists(
+    "employees",
+    "accrued_vacation_balance",
+    "REAL NOT NULL DEFAULT 0",
+  );
+  ensureColumnExists("audit_logs", "employee_id", "INTEGER");
+  ensureColumnExists("payroll_periods", "country", "TEXT NOT NULL DEFAULT 'CA'");
+  ensureColumnExists("payroll_periods", "province", "TEXT NOT NULL DEFAULT 'AB'");
+  ensureColumnExists("payroll_periods", "tax_year", "INTEGER NOT NULL DEFAULT 2026");
+  ensureColumnExists("payroll_periods", "pay_date", "TEXT");
+  ensureColumnExists("payroll_periods", "wage_rate_label", "TEXT");
+  ensureColumnExists("payroll_periods", "cheque_number_prefix", "TEXT");
+  ensureColumnExists(
+    "payroll_periods",
+    "pay_frequency",
+    "TEXT NOT NULL DEFAULT 'biweekly'",
+  );
+  ensureColumnExists(
+    "payroll_periods",
+    "pay_periods_per_year",
+    "INTEGER NOT NULL DEFAULT 26",
+  );
+  ensureColumnExists("payroll_items", "regular_hours", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "overtime_hours", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "regular_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "overtime_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "gross_pay_total", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "holiday_hours", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "holiday_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "holiday_label", "TEXT");
+  ensureColumnExists("payroll_items", "cpp_deduction", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "cpp_employer", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ei_deduction", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ei_employer", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "federal_tax", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "provincial_tax", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "total_deductions", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "net_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "country", "TEXT NOT NULL DEFAULT 'CA'");
+  ensureColumnExists("payroll_items", "province", "TEXT NOT NULL DEFAULT 'AB'");
+  ensureColumnExists("payroll_items", "tax_year", "INTEGER NOT NULL DEFAULT 2026");
+  ensureColumnExists("payroll_items", "pay_frequency", "TEXT NOT NULL DEFAULT 'biweekly'");
+  ensureColumnExists("payroll_items", "pay_periods_per_year", "INTEGER NOT NULL DEFAULT 26");
+  ensureColumnExists("payroll_items", "cpp2_deduction", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "pensionable_earnings", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "insurable_earnings", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ytd_cpp", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ytd_cpp2", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ytd_ei", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "federal_claim_amount", "REAL");
+  ensureColumnExists("payroll_items", "provincial_claim_amount", "REAL");
+  ensureColumnExists("payroll_items", "ytd_federal_tax", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "ytd_provincial_tax", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "vacation_rate", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "vacation_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "vacation_payout", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "vacation_accrued", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "pay_date", "TEXT");
+  ensureColumnExists("payroll_items", "cheque_number", "TEXT");
+  ensureColumnExists("payroll_items", "wage_rate_label", "TEXT");
+  ensureColumnExists(
+    "payroll_items",
+    "vacation_pay_schedule",
+    "TEXT NOT NULL DEFAULT 'monthly'",
+  );
+
+  const employeesNeedingMigration = db
+    .prepare(
+      `
+      SELECT id, pin
+      FROM employees
+      WHERE pin_hash IS NULL
+        AND pin IS NOT NULL
+      `,
+    )
+    .all();
+
+  const migratePins = db.transaction((employees) => {
+    const statement = db.prepare(
+      `
+      UPDATE employees
+      SET pin_hash = ?
+      WHERE id = ?
+      `,
+    );
+
+    for (const employee of employees) {
+      statement.run(hashPin(employee.pin), employee.id);
+    }
+  });
+
+  if (employeesNeedingMigration.length > 0) {
+    migratePins(employeesNeedingMigration);
+  }
+
+  db.prepare(
+    `
+    UPDATE employees
+    SET pin = ''
+    WHERE pin_hash IS NOT NULL
+      AND pin != ''
+    `,
+  ).run();
+
+  db.prepare(
+    `
+    UPDATE employees
+    SET start_date = COALESCE(start_date, substr(created_at, 1, 10))
+    WHERE start_date IS NULL
+       OR trim(start_date) = ''
+    `,
+  ).run();
+
+  db.prepare(
+    `
+    UPDATE employees
+    SET vacation_pay_schedule = ?
+    WHERE vacation_pay_schedule IS NULL
+       OR vacation_pay_schedule NOT IN ('monthly', 'accrued')
+    `,
+  ).run(DEFAULT_VACATION_PAY_SCHEDULE);
+
+  db.prepare(
+    `
+    UPDATE employees
+    SET accrued_vacation_balance = COALESCE(accrued_vacation_balance, 0)
+    WHERE accrued_vacation_balance IS NULL
+    `,
+  ).run();
+}
+
+function listEmployees() {
+  return db
+    .prepare(
+      `
+      SELECT id, name
+      FROM employees
+      WHERE active = 1
+      ORDER BY name ASC
+      `,
+    )
+    .all();
+}
+
+function listAdminEmployees() {
+  return db
+    .prepare(
+      `
+      SELECT
+        id,
+        name,
+        active,
+        default_hourly_rate,
+        default_pay_frequency,
+        start_date,
+        vacation_pay_schedule,
+        accrued_vacation_balance,
+        (
+          SELECT COUNT(*)
+          FROM time_records tr
+          WHERE tr.employee_id = employees.id
+        ) AS time_records_count,
+        (
+          SELECT COUNT(*)
+          FROM payroll_items pi
+          WHERE pi.employee_id = employees.id
+        ) AS payroll_items_count,
+        (
+          SELECT COUNT(*)
+          FROM audit_logs al
+          WHERE al.employee_id = employees.id
+        ) AS audit_logs_count
+      FROM employees
+      ORDER BY name ASC
+      `,
+    )
+    .all()
+    .map((employee) => ({
+      ...employee,
+      default_hourly_rate:
+        employee.default_hourly_rate === null
+          ? null
+          : Number(employee.default_hourly_rate),
+      default_pay_frequency: employee.default_pay_frequency || null,
+      start_date: employee.start_date || null,
+      vacation_pay_schedule:
+        employee.vacation_pay_schedule || DEFAULT_VACATION_PAY_SCHEDULE,
+      accrued_vacation_balance: Number(employee.accrued_vacation_balance || 0),
+      time_records_count: Number(employee.time_records_count || 0),
+      payroll_items_count: Number(employee.payroll_items_count || 0),
+      audit_logs_count: Number(employee.audit_logs_count || 0),
+      can_delete:
+        Number(employee.time_records_count || 0) === 0 &&
+        Number(employee.payroll_items_count || 0) === 0,
+    }));
+}
+
+function getEmployeeDependencySummary(employeeId) {
+  const counts = db
+    .prepare(
+      `
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM time_records
+          WHERE employee_id = ?
+        ) AS time_records_count,
+        (
+          SELECT COUNT(*)
+          FROM payroll_items
+          WHERE employee_id = ?
+        ) AS payroll_items_count,
+        (
+          SELECT COUNT(*)
+          FROM audit_logs
+          WHERE employee_id = ?
+        ) AS audit_logs_count
+      `,
+    )
+    .get(employeeId, employeeId, employeeId);
+
+  const timeRecordsCount = Number(counts.time_records_count || 0);
+  const payrollItemsCount = Number(counts.payroll_items_count || 0);
+  const auditLogsCount = Number(counts.audit_logs_count || 0);
+
+  return {
+    time_records_count: timeRecordsCount,
+    payroll_items_count: payrollItemsCount,
+    audit_logs_count: auditLogsCount,
+    can_delete: timeRecordsCount === 0 && payrollItemsCount === 0,
+  };
+}
+
+function findEmployeeById(employeeId) {
+  return db
+    .prepare(
+      `
+      SELECT
+        id,
+        name,
+        pin,
+        pin_hash,
+        active,
+        default_hourly_rate,
+        default_pay_frequency,
+        start_date,
+        vacation_pay_schedule,
+        accrued_vacation_balance
+      FROM employees
+      WHERE id = ?
+      `,
+    )
+    .get(employeeId);
+}
+
+function updateEmployeePayrollSettings({
+  employeeId,
+  name,
+  pin,
+  active,
+  defaultHourlyRate,
+  defaultPayFrequency,
+  startDate,
+  vacationPaySchedule,
+  adminUser = null,
+}) {
+  const currentEmployee = findEmployeeById(employeeId);
+  const normalizedPin = pin === null ? null : pin;
+  const nextPinHash =
+    normalizedPin === null
+      ? currentEmployee.pin_hash
+      : hashPin(normalizedPin);
+
+  db.prepare(
+    `
+    UPDATE employees
+    SET
+      name = COALESCE(?, name),
+      pin = '',
+      pin_hash = ?,
+      active = COALESCE(?, active),
+      default_hourly_rate = ?,
+      default_pay_frequency = ?,
+      start_date = COALESCE(?, start_date),
+      vacation_pay_schedule = COALESCE(?, vacation_pay_schedule)
+    WHERE id = ?
+    `,
+  ).run(
+    name,
+    nextPinHash,
+    active,
+    defaultHourlyRate,
+    defaultPayFrequency,
+    startDate,
+    vacationPaySchedule,
+    employeeId,
+  );
+
+  const updatedEmployee = findEmployeeById(employeeId);
+
+  insertAuditLog({
+    entityType: "employee",
+    entityId: employeeId,
+    employeeId,
+    action:
+      currentEmployee.active === 1 && updatedEmployee.active === 0
+        ? "deactivated"
+        : currentEmployee.active === 0 && updatedEmployee.active === 1
+          ? "activated"
+          : "updated",
+    changedFields: {
+      before: sanitizeEmployeeForAudit(currentEmployee),
+      after: sanitizeEmployeeForAudit(updatedEmployee),
+    },
+    adminUser,
+  });
+
+  return updatedEmployee;
+}
+
+function createEmployee({
+  name,
+  pin,
+  active = 1,
+  defaultHourlyRate = null,
+  defaultPayFrequency = null,
+  startDate,
+  vacationPaySchedule = DEFAULT_VACATION_PAY_SCHEDULE,
+  adminUser = null,
+}) {
+  const pinHash = hashPin(pin);
+  const result = db
+    .prepare(
+      `
+      INSERT INTO employees (
+        name,
+        pin,
+        pin_hash,
+        active,
+        default_hourly_rate,
+        default_pay_frequency,
+        start_date,
+        vacation_pay_schedule,
+        accrued_vacation_balance
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      name,
+      "",
+      pinHash,
+      active,
+      defaultHourlyRate,
+      defaultPayFrequency,
+      startDate,
+      vacationPaySchedule,
+      0,
+    );
+
+  const employee = findEmployeeById(result.lastInsertRowid);
+
+  insertAuditLog({
+    entityType: "employee",
+    entityId: employee.id,
+    employeeId: employee.id,
+    action: "created",
+    changedFields: {
+      after: sanitizeEmployeeForAudit(employee),
+    },
+    adminUser,
+  });
+
+  return employee;
+}
+
+function deleteEmployee(employeeId, adminUser = null) {
+  const employee = findEmployeeById(employeeId);
+
+  if (!employee) {
+    return null;
+  }
+
+  const dependencies = getEmployeeDependencySummary(employeeId);
+
+  if (!dependencies.can_delete) {
+    const error = new Error(
+      "This employee cannot be deleted because time records or payroll history already exist. Hide the employee instead.",
+    );
+    error.code = "EMPLOYEE_HAS_DEPENDENCIES";
+    error.details = dependencies;
+    throw error;
+  }
+
+  insertAuditLog({
+    entityType: "employee",
+    entityId: employeeId,
+    employeeId,
+    action: "deleted",
+    changedFields: {
+      before: sanitizeEmployeeForAudit(employee),
+      dependencies,
+    },
+    adminUser,
+  });
+
+  db.prepare(
+    `
+    DELETE FROM employees
+    WHERE id = ?
+    `,
+  ).run(employeeId);
+
+  return {
+    success: true,
+    deleted_employee_id: employeeId,
+    employee_name: employee.name,
+    dependencies,
+  };
+}
+
+function sanitizeEmployeeForAudit(employee) {
+  if (!employee) {
+    return null;
+  }
+
+  return {
+    id: employee.id,
+    name: employee.name,
+    active: employee.active,
+    default_hourly_rate: employee.default_hourly_rate,
+    default_pay_frequency: employee.default_pay_frequency,
+    start_date: employee.start_date,
+    vacation_pay_schedule:
+      employee.vacation_pay_schedule || DEFAULT_VACATION_PAY_SCHEDULE,
+    accrued_vacation_balance: Number(employee.accrued_vacation_balance || 0),
+    has_pin_hash: Boolean(employee.pin_hash),
+  };
+}
+
+function insertAuditLog({
+  entityType,
+  entityId,
+  employeeId = null,
+  action,
+  changedFields,
+  adminUser,
+}) {
+  db.prepare(
+    `
+    INSERT INTO audit_logs (
+      entity_type,
+      entity_id,
+      employee_id,
+      action,
+      changed_at,
+      changed_fields,
+      admin_user
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    entityType,
+    entityId,
+    employeeId,
+    action,
+    new Date().toISOString(),
+    changedFields ? JSON.stringify(changedFields) : null,
+    adminUser,
+  );
+}
+
+function normalizeAuditPageSize(pageSize) {
+  const normalized = Number(pageSize) || DEFAULT_AUDIT_PAGE_SIZE;
+  return Math.min(Math.max(normalized, 1), MAX_AUDIT_PAGE_SIZE);
+}
+
+function buildAuditLogFilters({
+  entityType,
+  entityId = null,
+  action = null,
+  employeeId = null,
+  startDate = null,
+  endDate = null,
+}) {
+  const params = [];
+  let whereClause = "WHERE l.entity_type = ?";
+  params.push(entityType);
+
+  if (entityId) {
+    whereClause += " AND l.entity_id = ?";
+    params.push(entityId);
+  }
+
+  if (action) {
+    whereClause += " AND l.action = ?";
+    params.push(action);
+  }
+
+  if (employeeId) {
+    whereClause += " AND l.employee_id = ?";
+    params.push(employeeId);
+  }
+
+  if (startDate) {
+    whereClause += " AND datetime(l.changed_at) >= datetime(?)";
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    whereClause += " AND datetime(l.changed_at) <= datetime(?)";
+    params.push(endDate);
+  }
+
+  return { whereClause, params };
+}
+
+function mapAuditLog(log) {
+  return {
+    ...log,
+    employee_id: log.employee_id === null ? null : Number(log.employee_id),
+    changed_fields: log.changed_fields ? JSON.parse(log.changed_fields) : null,
+  };
+}
+
+function listAuditLogs(entityType, entityId = null) {
+  const { whereClause, params } = buildAuditLogFilters({ entityType, entityId });
+
+  return db
+    .prepare(
+      `
+      SELECT
+        l.id,
+        l.entity_type,
+        l.entity_id,
+        l.employee_id,
+        l.action,
+        l.changed_at,
+        l.changed_fields,
+        l.admin_user
+      FROM audit_logs l
+      ${whereClause}
+      ORDER BY datetime(l.changed_at) DESC, l.id DESC
+      `,
+    )
+    .all(...params)
+    .map(mapAuditLog);
+}
+
+function listAuditLogsPaginated({
+  entityType,
+  entityId = null,
+  action = null,
+  employeeId = null,
+  startDate = null,
+  endDate = null,
+  page = 1,
+  pageSize = DEFAULT_AUDIT_PAGE_SIZE,
+}) {
+  const safePage = Number(page) > 0 ? Number(page) : 1;
+  const safePageSize = normalizeAuditPageSize(pageSize);
+  const offset = (safePage - 1) * safePageSize;
+  const { whereClause, params } = buildAuditLogFilters({
+    entityType,
+    entityId,
+    action,
+    employeeId,
+    startDate,
+    endDate,
+  });
+  const total = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS total
+      FROM audit_logs l
+      ${whereClause}
+      `,
+    )
+    .get(...params).total;
+  const items = db
+    .prepare(
+      `
+      SELECT
+        l.id,
+        l.entity_type,
+        l.entity_id,
+        l.employee_id,
+        l.action,
+        l.changed_at,
+        l.changed_fields,
+        l.admin_user
+      FROM audit_logs l
+      ${whereClause}
+      ORDER BY datetime(l.changed_at) DESC, l.id DESC
+      LIMIT ? OFFSET ?
+      `,
+    )
+    .all(...params, safePageSize, offset)
+    .map(mapAuditLog);
+
+  return {
+    items,
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages: total === 0 ? 0 : Math.ceil(total / safePageSize),
+  };
+}
+
+function listAuditLogsForExport({
+  entityType,
+  entityId = null,
+  action = null,
+  employeeId = null,
+  startDate = null,
+  endDate = null,
+}) {
+  const { whereClause, params } = buildAuditLogFilters({
+    entityType,
+    entityId,
+    action,
+    employeeId,
+    startDate,
+    endDate,
+  });
+
+  return db
+    .prepare(
+      `
+      SELECT
+        l.id,
+        l.entity_type,
+        l.entity_id,
+        l.employee_id,
+        l.action,
+        l.changed_at,
+        l.changed_fields,
+        l.admin_user
+      FROM audit_logs l
+      ${whereClause}
+      ORDER BY datetime(l.changed_at) DESC, l.id DESC
+      `,
+    )
+    .all(...params)
+    .map(mapAuditLog);
+}
+
+function listEmployeeAuditLogs(employeeId = null) {
+  return listAuditLogs("employee", employeeId);
+}
+
+function listTimeRecordAuditLogs(recordId = null) {
+  return listAuditLogs("time_record", recordId);
+}
+
+function listPayrollAuditLogs(payrollId = null) {
+  return listAuditLogs("payroll", payrollId);
+}
+
+function createAdminSession({ token, username, createdAt, expiresAt }) {
+  db.prepare(
+    `
+    INSERT OR REPLACE INTO admin_sessions (token, username, created_at, expires_at)
+    VALUES (?, ?, ?, ?)
+    `,
+  ).run(token, username, createdAt, expiresAt);
+
+  return getAdminSession(token);
+}
+
+function getAdminSession(token) {
+  return db
+    .prepare(
+      `
+      SELECT token, username, created_at, expires_at
+      FROM admin_sessions
+      WHERE token = ?
+      `,
+    )
+    .get(token);
+}
+
+function deleteAdminSession(token) {
+  return db
+    .prepare(
+      `
+      DELETE FROM admin_sessions
+      WHERE token = ?
+      `,
+    )
+    .run(token);
+}
+
+function cleanupExpiredAdminSessions(referenceIso = new Date().toISOString()) {
+  return db
+    .prepare(
+      `
+      DELETE FROM admin_sessions
+      WHERE datetime(expires_at) <= datetime(?)
+      `,
+    )
+    .run(referenceIso);
+}
+
+function getAdminLoginAttempt(ipAddress) {
+  return db
+    .prepare(
+      `
+      SELECT ip_address, attempts_count, window_start, updated_at
+      FROM admin_login_attempts
+      WHERE ip_address = ?
+      `,
+    )
+    .get(ipAddress);
+}
+
+function upsertAdminLoginAttempt({
+  ipAddress,
+  attemptsCount,
+  windowStart,
+  updatedAt,
+}) {
+  db.prepare(
+    `
+    INSERT INTO admin_login_attempts (
+      ip_address,
+      attempts_count,
+      window_start,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(ip_address) DO UPDATE SET
+      attempts_count = excluded.attempts_count,
+      window_start = excluded.window_start,
+      updated_at = excluded.updated_at
+    `,
+  ).run(ipAddress, attemptsCount, windowStart, updatedAt);
+}
+
+function clearAdminLoginAttempt(ipAddress) {
+  return db
+    .prepare(
+      `
+      DELETE FROM admin_login_attempts
+      WHERE ip_address = ?
+      `,
+    )
+    .run(ipAddress);
+}
+
+function cleanupAdminLoginAttempts(referenceIso) {
+  return db
+    .prepare(
+      `
+      DELETE FROM admin_login_attempts
+      WHERE datetime(updated_at) <= datetime(?)
+      `,
+    )
+    .run(referenceIso);
+}
+
+function verifyEmployeePin(employeeId, pin) {
+  const employee = findEmployeeById(employeeId);
+
+  if (!employee || employee.active !== 1) {
+    return null;
+  }
+
+  if (!employee.pin_hash) {
+    return false;
+  }
+
+  return verifyPin(pin, employee.pin_hash);
+}
+
+function normalizeRecordFilters({
+  employeeId,
+  startDate,
+  endDate,
+  recordStatus = "active",
+}) {
+  const conditions = [];
+  const params = [];
+
+  if (employeeId) {
+    conditions.push("tr.employee_id = ?");
+    params.push(employeeId);
+  }
+
+  if (startDate) {
+    conditions.push("datetime(tr.recorded_at) >= datetime(?)");
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    conditions.push("datetime(tr.recorded_at) <= datetime(?)");
+    params.push(endDate);
+  }
+
+  if (recordStatus === "active") {
+    conditions.push("tr.deleted_at IS NULL");
+  } else if (recordStatus === "deleted") {
+    conditions.push("tr.deleted_at IS NOT NULL");
+  }
+
+  return {
+    whereClause:
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+    params,
+  };
+}
+
+function buildTimeRecordSelect(whereClause, orderClause, paginationClause = "") {
+  return `
+    SELECT
+      tr.id,
+      tr.employee_id,
+      e.name AS employee_name,
+      tr.type,
+      COALESCE(tr.entry_mode, 'clock') AS entry_mode,
+      COALESCE(tr.manual_category, 'regular') AS manual_category,
+      tr.recorded_at,
+      COALESCE(tr.worked_hours, 0) AS worked_hours,
+      tr.note,
+      tr.holiday_label,
+      COALESCE(tr.holiday_multiplier, 1.5) AS holiday_multiplier,
+      tr.kiosk_id,
+      tr.created_manually,
+      tr.updated_at,
+      tr.deleted_at
+    FROM time_records tr
+    INNER JOIN employees e ON e.id = tr.employee_id
+    ${whereClause}
+    ${orderClause}
+    ${paginationClause}
+  `;
+}
+
+function findTimeRecordById(recordId) {
+  return db
+    .prepare(buildTimeRecordSelect("WHERE tr.id = ?", ""))
+    .get(recordId);
+}
+
+function getLastTimeRecord(employeeId) {
+  return db
+    .prepare(
+      `
+      SELECT id, type, recorded_at, kiosk_id, created_manually, updated_at
+      FROM time_records
+      WHERE employee_id = ?
+        AND deleted_at IS NULL
+        AND COALESCE(entry_mode, 'clock') = 'clock'
+      ORDER BY datetime(recorded_at) DESC, id DESC
+      LIMIT 1
+      `,
+    )
+    .get(employeeId);
+}
+
+function createTimeRecord({ employeeId, type, kioskId, recordedAt }) {
+  const result = db
+    .prepare(
+      `
+      INSERT INTO time_records (
+        employee_id,
+        type,
+        entry_mode,
+        recorded_at,
+        worked_hours,
+        note,
+        kiosk_id,
+        created_manually,
+        updated_at,
+        deleted_at
+      )
+      VALUES (?, ?, 'clock', ?, 0, NULL, ?, 0, NULL, NULL)
+      `,
+    )
+    .run(employeeId, type, recordedAt, kioskId || null);
+
+  return findTimeRecordById(result.lastInsertRowid);
+}
+
+function listTimeRecords({
+  employeeId,
+  startDate,
+  endDate,
+  recordStatus = "active",
+} = {}) {
+  const { whereClause, params } = normalizeRecordFilters({
+    employeeId,
+    startDate,
+    endDate,
+    recordStatus,
+  });
+
+  return db
+    .prepare(
+      buildTimeRecordSelect(
+        whereClause,
+        "ORDER BY datetime(tr.recorded_at) DESC, tr.id DESC",
+      ),
+    )
+    .all(...params);
+}
+
+function listTimeRecordsAscending({
+  employeeId,
+  startDate,
+  endDate,
+  recordStatus = "active",
+} = {}) {
+  const { whereClause, params } = normalizeRecordFilters({
+    employeeId,
+    startDate,
+    endDate,
+    recordStatus,
+  });
+
+  return db
+    .prepare(
+      buildTimeRecordSelect(
+        whereClause,
+        "ORDER BY e.name ASC, datetime(tr.recorded_at) ASC, tr.id ASC",
+      ),
+    )
+    .all(...params);
+}
+
+function listTimeRecordsPaginated({
+  employeeId,
+  startDate,
+  endDate,
+  recordStatus = "active",
+  page = 1,
+  pageSize = 10,
+} = {}) {
+  const safePage = Number(page) > 0 ? Number(page) : 1;
+  const safePageSize = Number(pageSize) > 0 ? Number(pageSize) : 10;
+  const offset = (safePage - 1) * safePageSize;
+
+  const { whereClause, params } = normalizeRecordFilters({
+    employeeId,
+    startDate,
+    endDate,
+    recordStatus,
+  });
+
+  const total = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS total
+      FROM time_records tr
+      INNER JOIN employees e ON e.id = tr.employee_id
+      ${whereClause}
+      `,
+    )
+    .get(...params).total;
+
+  const items = db
+    .prepare(
+      buildTimeRecordSelect(
+        whereClause,
+        "ORDER BY datetime(tr.recorded_at) DESC, tr.id DESC",
+        "LIMIT ? OFFSET ?",
+      ),
+    )
+    .all(...params, safePageSize, offset);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / safePageSize);
+
+  return {
+    items,
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+  };
+}
+
+function summarizeTimeRecords({
+  employeeId,
+  startDate,
+  endDate,
+  recordStatus = "active",
+} = {}) {
+  const records = listTimeRecordsAscending({
+    employeeId,
+    startDate,
+    endDate,
+    recordStatus,
+  });
+  const summaryByEmployee = new Map();
+  const totals = {
+    employees_with_records: 0,
+    total_check_ins: 0,
+    total_check_outs: 0,
+    total_records: 0,
+    total_hours: 0,
+    complete_shifts: 0,
+    open_shifts: 0,
+  };
+
+  for (const record of records) {
+    if (!summaryByEmployee.has(record.employee_id)) {
+      summaryByEmployee.set(record.employee_id, {
+        employee_id: record.employee_id,
+        employee_name: record.employee_name,
+        check_ins: 0,
+        check_outs: 0,
+        total_records: 0,
+        total_hours: 0,
+        complete_shifts: 0,
+        open_shifts: 0,
+        last_open_check_in_at: null,
+      });
+    }
+
+    const summary = summaryByEmployee.get(record.employee_id);
+    summary.total_records += 1;
+    totals.total_records += 1;
+
+    if (record.entry_mode === "manual") {
+      const manualHours = Number(record.worked_hours || 0);
+
+      if (record.manual_category !== "holiday" && manualHours > 0) {
+        summary.total_hours += manualHours;
+        summary.complete_shifts += 1;
+        totals.total_hours += manualHours;
+        totals.complete_shifts += 1;
+      }
+
+      continue;
+    }
+
+    if (record.type === "check-in") {
+      summary.check_ins += 1;
+      totals.total_check_ins += 1;
+      summary.last_open_check_in_at = record.recorded_at;
+      continue;
+    }
+
+    summary.check_outs += 1;
+    totals.total_check_outs += 1;
+
+    if (summary.last_open_check_in_at) {
+      const start = new Date(summary.last_open_check_in_at);
+      const end = new Date(record.recorded_at);
+      const durationInHours = (end - start) / (1000 * 60 * 60);
+
+      if (durationInHours > 0) {
+        summary.total_hours += durationInHours;
+        summary.complete_shifts += 1;
+        totals.total_hours += durationInHours;
+        totals.complete_shifts += 1;
+      }
+
+      summary.last_open_check_in_at = null;
+    }
+  }
+
+  const employees = Array.from(summaryByEmployee.values())
+    .map((summary) => {
+      const openShifts = summary.last_open_check_in_at ? 1 : 0;
+      return {
+        employee_id: summary.employee_id,
+        employee_name: summary.employee_name,
+        check_ins: summary.check_ins,
+        check_outs: summary.check_outs,
+        total_records: summary.total_records,
+        total_hours: Number(summary.total_hours.toFixed(2)),
+        complete_shifts: summary.complete_shifts,
+        open_shifts: openShifts,
+        payroll_ready_hours: Number(summary.total_hours.toFixed(2)),
+      };
+    })
+    .sort((left, right) => left.employee_name.localeCompare(right.employee_name));
+
+  totals.employees_with_records = employees.length;
+  totals.open_shifts = employees.reduce(
+    (count, employee) => count + employee.open_shifts,
+    0,
+  );
+  totals.total_hours = Number(totals.total_hours.toFixed(2));
+  totals.payroll_ready_hours = totals.total_hours;
+
+  return {
+    period: {
+      start: startDate || null,
+      end: endDate || null,
+      record_status: recordStatus,
+    },
+    totals,
+    employees,
+  };
+}
+
+function listEmployeeTimeRecordsForValidation(employeeId, excludedRecordId = null) {
+  const params = [employeeId];
+  const exclusionClause = excludedRecordId ? "AND tr.id != ?" : "";
+
+  if (excludedRecordId) {
+    params.push(excludedRecordId);
+  }
+
+  return db
+    .prepare(
+      `
+      SELECT
+        tr.id,
+        tr.employee_id,
+        tr.type,
+        tr.recorded_at,
+        tr.kiosk_id
+      FROM time_records tr
+      WHERE tr.employee_id = ?
+        AND tr.deleted_at IS NULL
+        AND COALESCE(tr.entry_mode, 'clock') = 'clock'
+        ${exclusionClause}
+      ORDER BY datetime(tr.recorded_at) ASC, tr.id ASC
+      `,
+    )
+    .all(...params);
+}
+
+function validateTimeRecordSequence(records) {
+  if (records.length === 0) {
+    return { valid: true };
+  }
+
+  if (records[0].type !== "check-in") {
+    return {
+      valid: false,
+      error: "A sequencia do funcionario deve comecar com um check-in.",
+    };
+  }
+
+  for (let index = 1; index < records.length; index += 1) {
+    if (records[index - 1].type === records[index].type) {
+      return {
+        valid: false,
+        error:
+          records[index].type === "check-in"
+            ? "Nao e permitido manter dois check-ins seguidos."
+            : "Nao e permitido manter dois check-outs seguidos.",
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+function validateManualRecordChange({
+  employeeId,
+  recordId = null,
+  nextType = null,
+  nextRecordedAt = null,
+  nextKioskId = null,
+  nextEntryMode = "clock",
+  mode,
+}) {
+  if (mode !== "delete" && nextEntryMode !== "clock") {
+    return { valid: true };
+  }
+
+  const existingRecords = listEmployeeTimeRecordsForValidation(employeeId, recordId);
+  let simulatedRecords = existingRecords;
+
+  if (mode !== "delete") {
+    simulatedRecords = [
+      ...existingRecords,
+      {
+        id: recordId || Number.MAX_SAFE_INTEGER,
+        employee_id: employeeId,
+        type: nextType,
+        entry_mode: nextEntryMode,
+        recorded_at: nextRecordedAt,
+        kiosk_id: nextKioskId || null,
+      },
+    ].sort((left, right) => {
+      const timeDifference =
+        new Date(left.recorded_at).getTime() - new Date(right.recorded_at).getTime();
+
+      if (timeDifference !== 0) {
+        return timeDifference;
+      }
+
+      return left.id - right.id;
+    });
+  }
+
+  return validateTimeRecordSequence(simulatedRecords);
+}
+
+function createManualTimeRecord({
+  employeeId,
+  type,
+  recordedAt,
+  kioskId,
+  adminUser = null,
+}) {
+  const validation = validateManualRecordChange({
+    employeeId,
+    nextType: type,
+    nextRecordedAt: recordedAt,
+    nextKioskId: kioskId,
+    nextEntryMode: "clock",
+    mode: "create",
+  });
+
+  if (!validation.valid) {
+    const error = new Error(validation.error);
+    error.code = "INVALID_SEQUENCE";
+    throw error;
+  }
+
+  const timestamp = new Date().toISOString();
+  const result = db
+    .prepare(
+      `
+      INSERT INTO time_records (
+        employee_id,
+        type,
+        entry_mode,
+        recorded_at,
+        worked_hours,
+        note,
+        kiosk_id,
+        created_manually,
+        updated_at,
+        deleted_at
+      )
+      VALUES (?, ?, 'clock', ?, 0, NULL, ?, 1, ?, NULL)
+      `,
+    )
+    .run(employeeId, type, recordedAt, kioskId || null, timestamp);
+
+  const record = findTimeRecordById(result.lastInsertRowid);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: record.id,
+    employeeId: record.employee_id,
+    action: "created",
+    changedFields: {
+      after: record,
+    },
+    adminUser,
+  });
+
+  return record;
+}
+
+function updateManualTimeRecord(
+  recordId,
+  { type, recordedAt, kioskId, adminUser = null },
+) {
+  const existingRecord = findTimeRecordById(recordId);
+
+  if (!existingRecord || existingRecord.deleted_at) {
+    return null;
+  }
+
+  const validation = validateManualRecordChange({
+    employeeId: existingRecord.employee_id,
+    recordId,
+    nextType: type,
+    nextRecordedAt: recordedAt,
+    nextKioskId: kioskId,
+    nextEntryMode: "clock",
+    mode: "update",
+  });
+
+  if (!validation.valid) {
+    const error = new Error(validation.error);
+    error.code = "INVALID_SEQUENCE";
+    throw error;
+  }
+
+  db.prepare(
+    `
+    UPDATE time_records
+    SET
+      type = ?,
+      entry_mode = 'clock',
+      recorded_at = ?,
+      worked_hours = 0,
+      note = NULL,
+      kiosk_id = ?,
+      updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(type, recordedAt, kioskId || null, new Date().toISOString(), recordId);
+
+  const record = findTimeRecordById(recordId);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: record.id,
+    employeeId: record.employee_id,
+    action: "updated",
+    changedFields: {
+      before: existingRecord,
+      after: record,
+    },
+    adminUser,
+  });
+
+  return record;
+}
+
+function deleteManualTimeRecord(recordId, adminUser = null) {
+  const existingRecord = findTimeRecordById(recordId);
+
+  if (!existingRecord || existingRecord.deleted_at) {
+    return null;
+  }
+
+  const validation = validateManualRecordChange({
+    employeeId: existingRecord.employee_id,
+    recordId,
+    mode: "delete",
+  });
+
+  if (!validation.valid) {
+    const error = new Error(validation.error);
+    error.code = "INVALID_SEQUENCE";
+    throw error;
+  }
+
+  const timestamp = new Date().toISOString();
+  db.prepare(
+    `
+    UPDATE time_records
+    SET deleted_at = ?, updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(timestamp, timestamp, recordId);
+
+  const record = findTimeRecordById(recordId);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: recordId,
+    employeeId: existingRecord.employee_id,
+    action: "deleted",
+    changedFields: {
+      before: existingRecord,
+      after: record,
+    },
+    adminUser,
+  });
+
+  return {
+    success: true,
+    deletedRecordId: recordId,
+    deletedAt: timestamp,
+  };
+}
+
+function restoreManualTimeRecord(recordId, adminUser = null) {
+  const existingRecord = findTimeRecordById(recordId);
+
+  if (!existingRecord || !existingRecord.deleted_at) {
+    return null;
+  }
+
+  const validation = validateManualRecordChange({
+    employeeId: existingRecord.employee_id,
+    recordId,
+    nextType: existingRecord.type,
+    nextRecordedAt: existingRecord.recorded_at,
+    nextKioskId: existingRecord.kiosk_id,
+    nextEntryMode: existingRecord.entry_mode || "clock",
+    mode: "restore",
+  });
+
+  if (!validation.valid) {
+    const error = new Error(validation.error);
+    error.code = "INVALID_SEQUENCE";
+    throw error;
+  }
+
+  db.prepare(
+    `
+    UPDATE time_records
+    SET deleted_at = NULL, updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(new Date().toISOString(), recordId);
+
+  const record = findTimeRecordById(recordId);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: record.id,
+    employeeId: record.employee_id,
+    action: "restored",
+    changedFields: {
+      before: existingRecord,
+      after: record,
+    },
+    adminUser,
+  });
+
+  return record;
+}
+
+function normalizeManualEntryRecordedAt(workDate) {
+  return `${workDate}T12:00:00`;
+}
+
+function createManualHoursEntry({
+  employeeId,
+  workDate,
+  workedHours,
+  note,
+  manualCategory = "regular",
+  holidayLabel = null,
+  holidayMultiplier = HOLIDAY_PAY_RULE.multiplier,
+  adminUser = null,
+}) {
+  const timestamp = new Date().toISOString();
+  const recordedAt = normalizeManualEntryRecordedAt(workDate);
+  const result = db
+    .prepare(
+      `
+      INSERT INTO time_records (
+        employee_id,
+        type,
+        entry_mode,
+        manual_category,
+        recorded_at,
+        worked_hours,
+        note,
+        holiday_label,
+        holiday_multiplier,
+        kiosk_id,
+        created_manually,
+        updated_at,
+        deleted_at
+      )
+      VALUES (?, 'check-in', 'manual', ?, ?, ?, ?, ?, ?, NULL, 1, ?, NULL)
+      `,
+    )
+    .run(
+      employeeId,
+      manualCategory,
+      recordedAt,
+      workedHours,
+      note || null,
+      holidayLabel || null,
+      holidayMultiplier,
+      timestamp,
+    );
+
+  const record = findTimeRecordById(result.lastInsertRowid);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: record.id,
+    employeeId: record.employee_id,
+    action: "manual_hours_created",
+    changedFields: {
+      after: record,
+    },
+    adminUser,
+  });
+
+  return record;
+}
+
+function updateManualHoursEntry(
+  recordId,
+  {
+    workDate,
+    workedHours,
+    note,
+    manualCategory = "regular",
+    holidayLabel = null,
+    holidayMultiplier = HOLIDAY_PAY_RULE.multiplier,
+    adminUser = null,
+  },
+) {
+  const existingRecord = findTimeRecordById(recordId);
+
+  if (
+    !existingRecord ||
+    existingRecord.deleted_at ||
+    existingRecord.entry_mode !== "manual"
+  ) {
+    return null;
+  }
+
+  db.prepare(
+    `
+    UPDATE time_records
+    SET
+      manual_category = ?,
+      recorded_at = ?,
+      worked_hours = ?,
+      note = ?,
+      holiday_label = ?,
+      holiday_multiplier = ?,
+      updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(
+    manualCategory,
+    normalizeManualEntryRecordedAt(workDate),
+    workedHours,
+    note || null,
+    holidayLabel || null,
+    holidayMultiplier,
+    new Date().toISOString(),
+    recordId,
+  );
+
+  const record = findTimeRecordById(recordId);
+  insertAuditLog({
+    entityType: "time_record",
+    entityId: record.id,
+    employeeId: record.employee_id,
+    action: "manual_hours_updated",
+    changedFields: {
+      before: existingRecord,
+      after: record,
+    },
+    adminUser,
+  });
+
+  return record;
+}
+
+function findPayrollPeriodByRange(startDate, endDate) {
+  return db
+    .prepare(
+      `
+      SELECT *
+      FROM payroll_periods
+      WHERE start_date = ?
+        AND end_date = ?
+      LIMIT 1
+      `,
+    )
+    .get(startDate, endDate);
+}
+
+function getApprovedPayrollYtdForEmployee({
+  employeeId,
+  taxYear,
+  country,
+  province,
+  periodStartDate,
+  excludePayrollPeriodId = null,
+}) {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(pi.cpp_deduction), 0) AS cpp,
+        COALESCE(SUM(pi.cpp2_deduction), 0) AS cpp2,
+        COALESCE(SUM(pi.ei_deduction), 0) AS ei,
+        COALESCE(SUM(pi.federal_tax), 0) AS federal_tax,
+        COALESCE(SUM(pi.provincial_tax), 0) AS provincial_tax,
+        COALESCE(SUM(pi.pensionable_earnings), 0) AS pensionable_earnings,
+        COALESCE(SUM(pi.insurable_earnings), 0) AS insurable_earnings
+      FROM payroll_items pi
+      INNER JOIN payroll_periods pp
+        ON pp.id = pi.payroll_period_id
+      WHERE pi.employee_id = ?
+        AND pi.tax_year = ?
+        AND pi.country = ?
+        AND pi.province = ?
+        AND pp.status = 'approved'
+        AND pp.start_date < ?
+        AND (? IS NULL OR pp.id <> ?)
+      `,
+    )
+    .get(
+      employeeId,
+      taxYear,
+      country,
+      province,
+      periodStartDate,
+      excludePayrollPeriodId,
+      excludePayrollPeriodId,
+    );
+
+  return {
+    cpp: Number(row.cpp || 0),
+    cpp2: Number(row.cpp2 || 0),
+    ei: Number(row.ei || 0),
+    federalTax: Number(row.federal_tax || 0),
+    provincialTax: Number(row.provincial_tax || 0),
+    pensionableEarnings: Number(row.pensionable_earnings || 0),
+    insurableEarnings: Number(row.insurable_earnings || 0),
+  };
+}
+
+function listPayrollPeriods() {
+  const periods = db
+    .prepare(
+      `
+      SELECT
+        pp.id,
+        pp.start_date,
+        pp.end_date,
+        pp.pay_date,
+        pp.wage_rate_label,
+        pp.cheque_number_prefix,
+        pp.country,
+        pp.province,
+        pp.tax_year,
+        pp.pay_frequency,
+        pp.pay_periods_per_year,
+        pp.status,
+        pp.created_at,
+        pp.updated_at,
+        COUNT(pi.id) AS items_count,
+        COALESCE(SUM(COALESCE(pi.gross_pay, 0)), 0) AS total_gross_pay,
+        COALESCE(
+          SUM(
+            COALESCE(pi.gross_pay, 0) +
+            COALESCE(pi.vacation_payout, 0) +
+            COALESCE(pi.holiday_pay, 0)
+          ),
+          0
+        ) AS total_earnings,
+        COALESCE(SUM(pi.total_hours), 0) AS total_hours
+      FROM payroll_periods pp
+      LEFT JOIN payroll_items pi ON pi.payroll_period_id = pp.id
+      GROUP BY pp.id
+      ORDER BY datetime(pp.created_at) DESC, pp.id DESC
+      `,
+    )
+    .all();
+
+  return periods.map((period) => ({
+    ...period,
+    tax_year: Number(period.tax_year || PAYROLL_TAX_YEAR),
+    pay_frequency: period.pay_frequency || DEFAULT_PAY_FREQUENCY,
+    pay_periods_per_year: Number(
+      period.pay_periods_per_year ||
+        getPayFrequencyConfig(period.pay_frequency).payPeriodsPerYear,
+    ),
+    total_gross_pay: Number(period.total_gross_pay || 0),
+    total_hours: Number(period.total_hours || 0),
+  }));
+}
+
+function getPayrollItems(payrollPeriodId) {
+  return db
+    .prepare(
+      `
+      SELECT
+        id,
+        payroll_period_id,
+        employee_id,
+        employee_name,
+        total_hours,
+        regular_hours,
+        overtime_hours,
+        hourly_rate,
+        regular_pay,
+        overtime_pay,
+        gross_pay,
+        gross_pay_total,
+        holiday_hours,
+        holiday_pay,
+        holiday_label,
+        vacation_rate,
+        vacation_pay,
+        vacation_payout,
+        vacation_accrued,
+        vacation_pay_schedule,
+        pay_date,
+        cheque_number,
+        wage_rate_label,
+        cpp_deduction,
+        cpp_employer,
+        cpp2_deduction,
+        ei_deduction,
+        ei_employer,
+        federal_tax,
+        provincial_tax,
+        total_deductions,
+        net_pay,
+        country,
+        province,
+        tax_year,
+        pay_frequency,
+        pay_periods_per_year,
+        pensionable_earnings,
+        insurable_earnings,
+        ytd_cpp,
+        ytd_cpp2,
+        ytd_ei,
+        ytd_federal_tax,
+        ytd_provincial_tax,
+        created_at,
+        updated_at
+      FROM payroll_items
+      WHERE payroll_period_id = ?
+      ORDER BY employee_name ASC
+      `,
+    )
+    .all(payrollPeriodId)
+    .map((item) => ({
+      ...item,
+      total_hours: Number(item.total_hours),
+      regular_hours: Number(item.regular_hours || 0),
+      overtime_hours: Number(item.overtime_hours || 0),
+      hourly_rate: Number(item.hourly_rate),
+      regular_pay: Number(item.regular_pay || 0),
+      overtime_pay: Number(item.overtime_pay || 0),
+      gross_pay: Number(item.gross_pay),
+      gross_pay_total: Number(item.gross_pay_total || item.gross_pay || 0),
+      total_earnings: Number(
+        (
+          Number(item.gross_pay || 0) +
+          Number(item.vacation_payout || 0) +
+          Number(item.holiday_pay || 0)
+        ).toFixed(2),
+      ),
+      holiday_hours: Number(item.holiday_hours || 0),
+      holiday_pay: Number(item.holiday_pay || 0),
+      holiday_label: item.holiday_label || null,
+      vacation_rate: Number(item.vacation_rate || 0),
+      vacation_pay: Number(item.vacation_pay || 0),
+      vacation_payout: Number(item.vacation_payout || 0),
+      vacation_accrued: Number(item.vacation_accrued || 0),
+      vacation_pay_schedule:
+        item.vacation_pay_schedule || DEFAULT_VACATION_PAY_SCHEDULE,
+      pay_date: item.pay_date || null,
+      cheque_number: item.cheque_number || null,
+      wage_rate_label: item.wage_rate_label || "Hourly rate",
+      cpp_deduction: Number(item.cpp_deduction || 0),
+      cpp_employer: Number(item.cpp_employer || 0),
+      cpp2_deduction: Number(item.cpp2_deduction || 0),
+      ei_deduction: Number(item.ei_deduction || 0),
+      ei_employer: Number(item.ei_employer || 0),
+      federal_tax: Number(item.federal_tax || 0),
+      provincial_tax: Number(item.provincial_tax || 0),
+      tax_total: Number((Number(item.federal_tax || 0) + Number(item.provincial_tax || 0)).toFixed(2)),
+      cpp_total: Number((Number(item.cpp_deduction || 0) + Number(item.cpp2_deduction || 0)).toFixed(2)),
+      total_deductions: Number(item.total_deductions || 0),
+      net_pay: Number(item.net_pay || 0),
+      country: item.country || PAYROLL_COUNTRY,
+      province: item.province || PAYROLL_PROVINCE,
+      tax_year: Number(item.tax_year || PAYROLL_TAX_YEAR),
+      pay_frequency: item.pay_frequency || DEFAULT_PAY_FREQUENCY,
+      pay_periods_per_year: Number(
+        item.pay_periods_per_year ||
+          getPayFrequencyConfig(item.pay_frequency).payPeriodsPerYear,
+      ),
+      pensionable_earnings: Number(item.pensionable_earnings || 0),
+      insurable_earnings: Number(item.insurable_earnings || 0),
+      ytd_cpp: Number(item.ytd_cpp || 0),
+      ytd_cpp2: Number(item.ytd_cpp2 || 0),
+      ytd_ei: Number(item.ytd_ei || 0),
+      ytd_federal_tax: Number(item.ytd_federal_tax || 0),
+      ytd_provincial_tax: Number(item.ytd_provincial_tax || 0),
+    }));
+}
+
+function getPayrollDetails(payrollPeriodId) {
+  const period = db
+    .prepare(
+      `
+      SELECT *
+      FROM payroll_periods
+      WHERE id = ?
+      `,
+    )
+    .get(payrollPeriodId);
+
+  if (!period) {
+    return null;
+  }
+
+  const items = getPayrollItems(payrollPeriodId);
+  const totals = items.reduce(
+    (accumulator, item) => ({
+      total_hours: accumulator.total_hours + item.total_hours,
+      total_gross_pay:
+        accumulator.total_gross_pay + (item.gross_pay || 0),
+      total_earnings:
+        accumulator.total_earnings + (item.total_earnings || 0),
+      total_holiday_pay: accumulator.total_holiday_pay + (item.holiday_pay || 0),
+      total_vacation_pay: accumulator.total_vacation_pay + (item.vacation_pay || 0),
+      total_vacation_payout:
+        accumulator.total_vacation_payout + (item.vacation_payout || 0),
+      total_vacation_accrued:
+        accumulator.total_vacation_accrued + (item.vacation_accrued || 0),
+      total_cpp_deduction:
+        accumulator.total_cpp_deduction + (item.cpp_deduction || 0),
+      total_cpp_employer:
+        accumulator.total_cpp_employer + (item.cpp_employer || 0),
+      total_cpp2_deduction:
+        accumulator.total_cpp2_deduction + (item.cpp2_deduction || 0),
+      total_ei_deduction:
+        accumulator.total_ei_deduction + (item.ei_deduction || 0),
+      total_ei_employer:
+        accumulator.total_ei_employer + (item.ei_employer || 0),
+      total_federal_tax:
+        accumulator.total_federal_tax + (item.federal_tax || 0),
+      total_provincial_tax:
+        accumulator.total_provincial_tax + (item.provincial_tax || 0),
+      total_tax: accumulator.total_tax + (item.tax_total || 0),
+      total_ytd_federal_tax:
+        accumulator.total_ytd_federal_tax + (item.ytd_federal_tax || 0),
+      total_ytd_provincial_tax:
+        accumulator.total_ytd_provincial_tax + (item.ytd_provincial_tax || 0),
+      total_deductions:
+        accumulator.total_deductions + (item.total_deductions || 0),
+      total_net_pay: accumulator.total_net_pay + (item.net_pay || 0),
+      employees_count: accumulator.employees_count + 1,
+    }),
+    {
+      total_hours: 0,
+      total_gross_pay: 0,
+      total_earnings: 0,
+      total_holiday_pay: 0,
+      total_vacation_pay: 0,
+      total_vacation_payout: 0,
+      total_vacation_accrued: 0,
+      total_cpp_deduction: 0,
+      total_cpp_employer: 0,
+      total_cpp2_deduction: 0,
+      total_ei_deduction: 0,
+      total_ei_employer: 0,
+      total_federal_tax: 0,
+      total_provincial_tax: 0,
+      total_tax: 0,
+      total_ytd_federal_tax: 0,
+      total_ytd_provincial_tax: 0,
+      total_deductions: 0,
+      total_net_pay: 0,
+      employees_count: 0,
+    },
+  );
+
+  return {
+    ...period,
+    pay_date: period.pay_date || null,
+    wage_rate_label: period.wage_rate_label || "Hourly rate",
+    cheque_number_prefix: period.cheque_number_prefix || null,
+    tax_year: Number(period.tax_year || PAYROLL_TAX_YEAR),
+    pay_frequency: period.pay_frequency || DEFAULT_PAY_FREQUENCY,
+    pay_periods_per_year: Number(
+      period.pay_periods_per_year ||
+        getPayFrequencyConfig(period.pay_frequency).payPeriodsPerYear,
+    ),
+    items,
+    totals: {
+      employees_count: totals.employees_count,
+      total_hours: Number(totals.total_hours.toFixed(2)),
+      total_gross_pay: Number(totals.total_gross_pay.toFixed(2)),
+      total_earnings: Number(totals.total_earnings.toFixed(2)),
+      total_holiday_pay: Number(totals.total_holiday_pay.toFixed(2)),
+      total_vacation_pay: Number(totals.total_vacation_pay.toFixed(2)),
+      total_vacation_payout: Number(totals.total_vacation_payout.toFixed(2)),
+      total_vacation_accrued: Number(totals.total_vacation_accrued.toFixed(2)),
+      total_cpp_deduction: Number(totals.total_cpp_deduction.toFixed(2)),
+      total_cpp_employer: Number(totals.total_cpp_employer.toFixed(2)),
+      total_cpp2_deduction: Number(totals.total_cpp2_deduction.toFixed(2)),
+      total_cpp: Number(
+        (totals.total_cpp_deduction + totals.total_cpp2_deduction).toFixed(2),
+      ),
+      total_ei_deduction: Number(totals.total_ei_deduction.toFixed(2)),
+      total_ei_employer: Number(totals.total_ei_employer.toFixed(2)),
+      total_federal_tax: Number(totals.total_federal_tax.toFixed(2)),
+      total_provincial_tax: Number(totals.total_provincial_tax.toFixed(2)),
+      total_tax: Number(totals.total_tax.toFixed(2)),
+      total_ytd_federal_tax: Number(totals.total_ytd_federal_tax.toFixed(2)),
+      total_ytd_provincial_tax: Number(
+        totals.total_ytd_provincial_tax.toFixed(2),
+      ),
+      total_deductions: Number(totals.total_deductions.toFixed(2)),
+      total_net_pay: Number(totals.total_net_pay.toFixed(2)),
+    },
+  };
+}
+
+function getPayrollPayslip(payrollPeriodId, payrollItemId) {
+  const payroll = getPayrollDetails(payrollPeriodId);
+
+  if (!payroll) {
+    return null;
+  }
+
+  const item = payroll.items.find((currentItem) => currentItem.id === payrollItemId);
+
+  if (!item) {
+    return null;
+  }
+
+  const totalEarnings = roundMoney(
+    item.gross_pay + item.vacation_payout + item.holiday_pay,
+  );
+  const totalDeductions = roundMoney(
+    item.federal_tax +
+      item.provincial_tax +
+      item.cpp_total +
+      item.ei_deduction,
+  );
+  const netPay = roundMoney(totalEarnings - totalDeductions);
+
+  return {
+    payroll_period_id: payroll.id,
+    payroll_item_id: item.id,
+    employee_id: item.employee_id,
+    employee_name: item.employee_name,
+    pay_period: {
+      start_date: payroll.start_date,
+      end_date: payroll.end_date,
+      pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
+      status: payroll.status,
+    },
+    header: {
+      employee: item.employee_name,
+      pay_period: `${payroll.start_date} to ${payroll.end_date}`,
+      wage_rate: `${item.wage_rate_label || payroll.wage_rate_label || "Hourly rate"}: $${item.hourly_rate.toFixed(2)}`,
+      wage_rate_label: item.wage_rate_label || payroll.wage_rate_label || "Hourly rate",
+      wage_rate_value: item.hourly_rate,
+      pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
+      payment_reference: item.cheque_number || null,
+      cheque_no: item.cheque_number || null,
+    },
+    earnings: {
+      regular_earnings: roundMoney(item.gross_pay),
+      vacation_pay: roundMoney(item.vacation_payout),
+      extra_pay: roundMoney(item.holiday_pay),
+      extra_pay_label: item.holiday_label || "Holiday Pay",
+      total_earnings: totalEarnings,
+      accrued_vacation: roundMoney(item.vacation_accrued),
+    },
+    deductions: {
+      federal_tax: roundMoney(item.federal_tax),
+      provincial_tax: roundMoney(item.provincial_tax),
+      cpp: roundMoney(item.cpp_total),
+      ei: roundMoney(item.ei_deduction),
+      total_deductions: totalDeductions,
+    },
+    totals: {
+      total_earnings: totalEarnings,
+      total_deductions: totalDeductions,
+      net_pay: netPay,
+    },
+    notes: {
+      vacation_schedule: item.vacation_pay_schedule,
+      accrued_vacation_balance_note:
+        item.vacation_pay_schedule === "accrued"
+          ? `Vacation pay of $${roundMoney(item.vacation_accrued).toFixed(2)} was accrued and not included in this payout.`
+          : null,
+    },
+    raw: {
+      gross_pay: roundMoney(item.gross_pay),
+      vacation_pay: roundMoney(item.vacation_pay),
+      vacation_payout: roundMoney(item.vacation_payout),
+      vacation_accrued: roundMoney(item.vacation_accrued),
+      holiday_pay: roundMoney(item.holiday_pay),
+      holiday_label: item.holiday_label || "Holiday Pay",
+      federal_tax: roundMoney(item.federal_tax),
+      provincial_tax: roundMoney(item.provincial_tax),
+      cpp_total: roundMoney(item.cpp_total),
+      cpp_employer: roundMoney(item.cpp_employer),
+      ei_deduction: roundMoney(item.ei_deduction),
+      ei_employer: roundMoney(item.ei_employer),
+      total_deductions: roundMoney(item.total_deductions),
+      net_pay: roundMoney(item.net_pay),
+    },
+  };
+}
+
+function resolvePayrollPayFrequency(requestedPayFrequency, employeesWithHours) {
+  if (requestedPayFrequency) {
+    return getPayFrequencyConfig(requestedPayFrequency).code;
+  }
+
+  const missingFrequencyEmployees = employeesWithHours
+    .filter((employee) => !employee.default_pay_frequency)
+    .map((employee) => employee.name || employee.employee_name || `Employee #${employee.id || employee.employee_id}`);
+
+  if (missingFrequencyEmployees.length > 0) {
+    const error = new Error(
+      `Payroll cannot be generated because pay frequency is missing for: ${missingFrequencyEmployees.join(", ")}.`,
+    );
+    error.code = "MISSING_EMPLOYEE_PAY_FREQUENCY";
+    throw error;
+  }
+
+  const employeeFrequencies = Array.from(
+    new Set(employeesWithHours.map((employee) => employee.default_pay_frequency)),
+  );
+
+  if (employeeFrequencies.length === 1) {
+    return getPayFrequencyConfig(employeeFrequencies[0]).code;
+  }
+
+  const error = new Error(
+    "Payroll cannot be generated because employees in this run have different pay frequencies. Select an explicit payroll pay frequency override first.",
+  );
+  error.code = "MIXED_EMPLOYEE_PAY_FREQUENCIES";
+  throw error;
+}
+
+function summarizeVacationAccruedByEmployee(items = []) {
+  return items.reduce((accumulator, item) => {
+    const employeeKey = String(item.employee_id);
+    accumulator.set(
+      employeeKey,
+      roundMoney(
+        (accumulator.get(employeeKey) || 0) + Number(item.vacation_accrued || 0),
+      ),
+    );
+    return accumulator;
+  }, new Map());
+}
+
+function generatePayroll({
+  startDate,
+  endDate,
+  payDate = null,
+  wageRateLabel = "Hourly rate",
+  chequeNumberPrefix = null,
+  taxYear = PAYROLL_TAX_YEAR,
+  country = PAYROLL_COUNTRY,
+  province = PAYROLL_PROVINCE,
+  payFrequency = null,
+  defaultHourlyRate = null,
+  hourlyRatesByEmployee = {},
+  holidayAdjustmentsByEmployee = {},
+  allowApprovedRebuild = false,
+  auditAction = "generated",
+  adminUser = null,
+}) {
+  if (Number(taxYear) !== PAYROLL_TAX_YEAR || String(startDate).slice(0, 4) !== String(taxYear)) {
+    const error = new Error(
+      `Este modulo de payroll suporta apenas tax_year ${PAYROLL_TAX_YEAR}.`,
+    );
+    error.code = "UNSUPPORTED_TAX_YEAR";
+    throw error;
+  }
+
+  if (country !== PAYROLL_COUNTRY || province !== PAYROLL_PROVINCE) {
+    const error = new Error(
+      `Este modulo de payroll suporta apenas ${PAYROLL_COUNTRY}/${PAYROLL_PROVINCE}.`,
+    );
+    error.code = "UNSUPPORTED_JURISDICTION";
+    throw error;
+  }
+
+  const existingPeriod = findPayrollPeriodByRange(startDate, endDate);
+
+  if (existingPeriod?.status === "approved" && !allowApprovedRebuild) {
+    const error = new Error("Este payroll ja foi aprovado e nao pode ser regenerado.");
+    error.code = "PAYROLL_APPROVED";
+    throw error;
+  }
+
+  const employees = calculatePayrollHours({
+    startDate,
+    endDate,
+  })
+    .filter((employee) => employee.total_hours > 0)
+    .map((employee) => ({
+      ...employee,
+      settings: findEmployeeById(employee.employee_id),
+    }));
+
+  const payFrequencyConfig = getPayFrequencyConfig(
+    resolvePayrollPayFrequency(
+      payFrequency,
+      employees.map((employee) => employee.settings || {}),
+    ),
+  );
+
+  const timestamp = new Date().toISOString();
+  const resolvedPayDate = payDate || endDate;
+  const previousItems = existingPeriod?.id ? getPayrollItems(existingPeriod.id) : [];
+  const previousAccruedByEmployee = summarizeVacationAccruedByEmployee(previousItems);
+
+  const transaction = db.transaction(() => {
+    let payrollPeriodId = existingPeriod?.id;
+    let resolvedChequePrefix =
+      chequeNumberPrefix ||
+      existingPeriod?.cheque_number_prefix ||
+      null;
+    const nextStatus =
+      existingPeriod?.status === "approved" && allowApprovedRebuild
+        ? "approved"
+        : "draft";
+    const nextAccruedByEmployee = new Map();
+    const updateAccruedVacationBalance = db.prepare(
+      `
+      UPDATE employees
+      SET accrued_vacation_balance = COALESCE(accrued_vacation_balance, 0) + ?
+      WHERE id = ?
+      `,
+    );
+
+    if (payrollPeriodId) {
+      db.prepare(
+        `
+        UPDATE payroll_periods
+        SET
+          updated_at = ?,
+          status = ?,
+          pay_date = ?,
+          wage_rate_label = ?,
+          cheque_number_prefix = ?,
+          country = ?,
+          province = ?,
+          tax_year = ?,
+          pay_frequency = ?,
+          pay_periods_per_year = ?
+        WHERE id = ?
+        `,
+      ).run(
+        timestamp,
+        nextStatus,
+        resolvedPayDate,
+        wageRateLabel,
+        resolvedChequePrefix,
+        country,
+        province,
+        taxYear,
+        payFrequencyConfig.code,
+        payFrequencyConfig.payPeriodsPerYear,
+        payrollPeriodId,
+      );
+
+      db.prepare("DELETE FROM payroll_items WHERE payroll_period_id = ?").run(
+        payrollPeriodId,
+      );
+    } else {
+      const result = db
+        .prepare(
+          `
+          INSERT INTO payroll_periods (
+            start_date,
+            end_date,
+            pay_date,
+            wage_rate_label,
+            cheque_number_prefix,
+            country,
+            province,
+            tax_year,
+            pay_frequency,
+            pay_periods_per_year,
+            status,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+          `,
+        )
+        .run(
+          startDate,
+          endDate,
+          resolvedPayDate,
+          wageRateLabel,
+          chequeNumberPrefix,
+          country,
+          province,
+          taxYear,
+          payFrequencyConfig.code,
+          payFrequencyConfig.payPeriodsPerYear,
+          timestamp,
+          timestamp,
+        );
+
+      payrollPeriodId = result.lastInsertRowid;
+      resolvedChequePrefix = chequeNumberPrefix || null;
+    }
+
+    const insertItem = db.prepare(
+      `
+      INSERT INTO payroll_items (
+        payroll_period_id,
+        employee_id,
+        employee_name,
+        total_hours,
+        regular_hours,
+        overtime_hours,
+        hourly_rate,
+        regular_pay,
+        overtime_pay,
+        gross_pay,
+        gross_pay_total,
+        holiday_hours,
+        holiday_pay,
+        holiday_label,
+        vacation_rate,
+        vacation_pay,
+        vacation_payout,
+        vacation_accrued,
+        vacation_pay_schedule,
+        pay_date,
+        cheque_number,
+        wage_rate_label,
+        cpp_deduction,
+        cpp_employer,
+        cpp2_deduction,
+        ei_deduction,
+        ei_employer,
+        federal_tax,
+        provincial_tax,
+        total_deductions,
+        net_pay,
+        country,
+        province,
+        tax_year,
+        pay_frequency,
+        pay_periods_per_year,
+        pensionable_earnings,
+        insurable_earnings,
+        ytd_cpp,
+        ytd_cpp2,
+        ytd_ei,
+        ytd_federal_tax,
+        ytd_provincial_tax,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+
+    employees.forEach((employee, itemIndex) => {
+      const employeeSettings = employee.settings;
+      const resolvedRateValue =
+        hourlyRatesByEmployee[employee.employee_id] ??
+        defaultHourlyRate ??
+        employeeSettings?.default_hourly_rate;
+      const employeeRate = Number(resolvedRateValue);
+
+      if (!Number.isFinite(employeeRate) || employeeRate <= 0) {
+        const error = new Error(
+          `Payroll cannot be generated because hourly rate is missing for ${employee.employee_name}.`,
+        );
+        error.code = "MISSING_EMPLOYEE_HOURLY_RATE";
+        throw error;
+      }
+      const totalHours = Number(employee.total_hours);
+      const regularHours = Number(employee.regular_hours);
+      const overtimeHours = Number(employee.overtime_hours);
+      const regularPay = roundMoney(regularHours * employeeRate);
+      const overtimePay = roundMoney(
+        overtimeHours *
+          employeeRate *
+          PAYROLL_OVERTIME_RULE.overtimeMultiplier,
+      );
+      const grossPay = roundMoney(regularPay + overtimePay);
+      const holidayAdjustment = {
+        holidayHours: employee.holiday_hours || 0,
+        holidayLabel: employee.holiday_label || null,
+        ...(holidayAdjustmentsByEmployee[employee.employee_id] || {}),
+      };
+      const holidayPay = calculateHolidayPayAmount({
+        holidayPay: holidayAdjustment.holidayPay,
+        holidayHours: holidayAdjustment.holidayHours,
+        hourlyRate: employeeRate,
+      });
+      const holidayHours = Number(holidayAdjustment.holidayHours || 0);
+      const holidayLabel =
+        holidayPay > 0 ? holidayAdjustment.holidayLabel || "Holiday Pay" : null;
+      const vacation = calculateVacationPayForEmployee({
+        startDate: employeeSettings?.start_date,
+        payrollEndDate: endDate,
+        vacationPaySchedule: employeeSettings?.vacation_pay_schedule,
+        baseGrossPay: grossPay,
+      });
+      const grossPayTotal = roundMoney(
+        grossPay + vacation.vacation_payout + holidayPay,
+      );
+      const ytd = getApprovedPayrollYtdForEmployee({
+        employeeId: employee.employee_id,
+        taxYear,
+        country,
+        province,
+        periodStartDate: startDate,
+        excludePayrollPeriodId: payrollPeriodId,
+      });
+      const deductions = calculatePayrollDeductions({
+        grossPayTotal,
+        payFrequency: payFrequencyConfig.code,
+        ytd,
+      });
+      const employerContributions = calculateEmployerContributions({
+        cppEmployee: deductions.cpp_deduction + deductions.cpp2_deduction,
+        eiEmployee: deductions.ei_deduction,
+      });
+      const chequeNumber = buildChequeNumber(resolvedChequePrefix, itemIndex);
+      nextAccruedByEmployee.set(
+        String(employee.employee_id),
+        roundMoney(vacation.vacation_accrued),
+      );
+
+      insertItem.run(
+        payrollPeriodId,
+        employee.employee_id,
+        employee.employee_name,
+        totalHours,
+        regularHours,
+        overtimeHours,
+        employeeRate,
+        regularPay,
+        overtimePay,
+        grossPay,
+        grossPayTotal,
+        holidayHours,
+        holidayPay,
+        holidayLabel,
+        vacation.vacation_rate,
+        vacation.vacation_pay,
+        vacation.vacation_payout,
+        vacation.vacation_accrued,
+        vacation.vacation_pay_schedule,
+        resolvedPayDate,
+        chequeNumber,
+        wageRateLabel,
+        deductions.cpp_deduction,
+        employerContributions.cpp_employer,
+        deductions.cpp2_deduction,
+        deductions.ei_deduction,
+        employerContributions.ei_employer,
+        deductions.federal_tax,
+        deductions.provincial_tax,
+        deductions.total_deductions,
+        deductions.net_pay,
+        deductions.country,
+        deductions.province,
+        deductions.tax_year,
+        deductions.pay_frequency,
+        deductions.pay_periods_per_year,
+        deductions.pensionable_earnings,
+        deductions.insurable_earnings,
+        deductions.ytd_cpp,
+        deductions.ytd_cpp2,
+        deductions.ytd_ei,
+        deductions.ytd_federal_tax,
+        deductions.ytd_provincial_tax,
+        timestamp,
+        timestamp,
+      );
+    });
+
+    if (existingPeriod?.status === "approved" && allowApprovedRebuild) {
+      const employeeIds = new Set([
+        ...previousAccruedByEmployee.keys(),
+        ...nextAccruedByEmployee.keys(),
+      ]);
+
+      employeeIds.forEach((employeeId) => {
+        const previousAccrued = previousAccruedByEmployee.get(employeeId) || 0;
+        const nextAccrued = nextAccruedByEmployee.get(employeeId) || 0;
+        const delta = roundMoney(nextAccrued - previousAccrued);
+
+        if (delta !== 0) {
+          updateAccruedVacationBalance.run(delta, Number(employeeId));
+        }
+      });
+    }
+
+    return payrollPeriodId;
+  });
+
+  const payrollPeriodId = transaction();
+  const payroll = getPayrollDetails(payrollPeriodId);
+  insertAuditLog({
+    entityType: "payroll",
+    entityId: payroll.id,
+    action: auditAction,
+    changedFields: {
+      after: {
+        id: payroll.id,
+        start_date: payroll.start_date,
+        end_date: payroll.end_date,
+        status: payroll.status,
+        pay_frequency: payroll.pay_frequency,
+        items_count: payroll.items.length,
+      },
+    },
+    adminUser,
+  });
+
+  return payroll;
+}
+
+function recalculatePayroll(
+  payrollPeriodId,
+  { adminUser = null, allowApprovedRebuild = false } = {},
+) {
+  const payroll = getPayrollDetails(payrollPeriodId);
+
+  if (!payroll) {
+    return null;
+  }
+
+  return generatePayroll({
+    startDate: payroll.start_date,
+    endDate: payroll.end_date,
+    payDate: payroll.pay_date || payroll.end_date,
+    wageRateLabel: payroll.wage_rate_label || "Hourly rate",
+    chequeNumberPrefix: payroll.cheque_number_prefix || null,
+    taxYear: payroll.tax_year || PAYROLL_TAX_YEAR,
+    country: payroll.country || PAYROLL_COUNTRY,
+    province: payroll.province || PAYROLL_PROVINCE,
+    payFrequency: payroll.pay_frequency || null,
+    hourlyRatesByEmployee: Object.fromEntries(
+      payroll.items.map((item) => [item.employee_id, item.hourly_rate]),
+    ),
+    holidayAdjustmentsByEmployee: Object.fromEntries(
+      payroll.items.map((item) => [
+        item.employee_id,
+        {
+          holidayPay: (item.holiday_hours || 0) > 0 ? null : item.holiday_pay || 0,
+          holidayHours: item.holiday_hours || 0,
+          holidayLabel: item.holiday_label || null,
+        },
+      ]),
+    ),
+    allowApprovedRebuild,
+    auditAction: "recalculated",
+    adminUser,
+  });
+}
+
+function approvePayroll(payrollPeriodId, adminUser = null) {
+  const payroll = getPayrollDetails(payrollPeriodId);
+
+  if (!payroll) {
+    return null;
+  }
+
+  if (payroll.status === "approved") {
+    return payroll;
+  }
+
+  const applyAccruedVacationBalances = db.prepare(
+    `
+    UPDATE employees
+    SET accrued_vacation_balance = COALESCE(accrued_vacation_balance, 0) + ?
+    WHERE id = ?
+    `,
+  );
+
+  const transaction = db.transaction(() => {
+    for (const item of payroll.items) {
+      if ((item.vacation_accrued || 0) > 0) {
+        applyAccruedVacationBalances.run(item.vacation_accrued, item.employee_id);
+      }
+    }
+
+    db.prepare(
+      `
+      UPDATE payroll_periods
+      SET status = 'approved', updated_at = ?
+      WHERE id = ?
+      `,
+    ).run(new Date().toISOString(), payrollPeriodId);
+  });
+
+  transaction();
+
+  const approvedPayroll = getPayrollDetails(payrollPeriodId);
+  insertAuditLog({
+    entityType: "payroll",
+    entityId: approvedPayroll.id,
+    action: "approved",
+    changedFields: {
+      before: {
+        id: payroll.id,
+        status: payroll.status,
+      },
+      after: {
+        id: approvedPayroll.id,
+        status: approvedPayroll.status,
+      },
+    },
+    adminUser,
+  });
+
+  return approvedPayroll;
+}
+
+function updatePayrollItemHoliday({
+  payrollPeriodId,
+  payrollItemId,
+  holidayPay,
+  holidayHours,
+  holidayLabel,
+  adminUser = null,
+}) {
+  const payroll = getPayrollDetails(payrollPeriodId);
+
+  if (!payroll) {
+    return null;
+  }
+
+  if (payroll.status === "approved") {
+    const error = new Error("Payroll aprovado nao pode ser alterado.");
+    error.code = "PAYROLL_APPROVED";
+    throw error;
+  }
+
+  const item = payroll.items.find((currentItem) => currentItem.id === payrollItemId);
+
+  if (!item) {
+    return null;
+  }
+
+  const normalizedHolidayPay = calculateHolidayPayAmount({
+    holidayPay,
+    holidayHours,
+    hourlyRate: item.hourly_rate,
+  });
+
+  if (normalizedHolidayPay < 0) {
+    const error = new Error("holiday_pay cannot be negative.");
+    error.code = "INVALID_HOLIDAY_PAY";
+    throw error;
+  }
+
+  const normalizedHolidayHours =
+    holidayPay !== undefined && holidayPay !== null && holidayPay !== ""
+      ? 0
+      : Number(holidayHours || 0);
+  const normalizedHolidayLabel =
+    normalizedHolidayPay > 0
+      ? String(holidayLabel || item.holiday_label || "Holiday Pay").trim() || "Holiday Pay"
+      : null;
+  const grossPayTotal = Number(
+    (
+      item.gross_pay +
+      normalizedHolidayPay +
+      (item.vacation_payout || 0)
+    ).toFixed(2),
+  );
+  const ytd = getApprovedPayrollYtdForEmployee({
+    employeeId: item.employee_id,
+    taxYear: payroll.tax_year || item.tax_year || PAYROLL_TAX_YEAR,
+    country: payroll.country || item.country || PAYROLL_COUNTRY,
+    province: payroll.province || item.province || PAYROLL_PROVINCE,
+    periodStartDate: payroll.start_date,
+    excludePayrollPeriodId: payrollPeriodId,
+  });
+  const deductions = calculatePayrollDeductions({
+    grossPayTotal,
+    payFrequency: payroll.pay_frequency || item.pay_frequency,
+    ytd,
+  });
+  const employerContributions = calculateEmployerContributions({
+    cppEmployee: deductions.cpp_deduction + deductions.cpp2_deduction,
+    eiEmployee: deductions.ei_deduction,
+  });
+
+  db.prepare(
+    `
+    UPDATE payroll_items
+    SET
+      holiday_hours = ?,
+      holiday_pay = ?,
+      holiday_label = ?,
+      gross_pay_total = ?,
+      gross_pay = ?,
+      cpp_deduction = ?,
+      cpp_employer = ?,
+      cpp2_deduction = ?,
+      ei_deduction = ?,
+      ei_employer = ?,
+      federal_tax = ?,
+      provincial_tax = ?,
+      total_deductions = ?,
+      net_pay = ?,
+      country = ?,
+      province = ?,
+      tax_year = ?,
+      pay_frequency = ?,
+      pay_periods_per_year = ?,
+      pensionable_earnings = ?,
+      insurable_earnings = ?,
+      ytd_cpp = ?,
+      ytd_cpp2 = ?,
+      ytd_ei = ?,
+      ytd_federal_tax = ?,
+      ytd_provincial_tax = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND payroll_period_id = ?
+    `,
+  ).run(
+    normalizedHolidayHours,
+    normalizedHolidayPay,
+    normalizedHolidayLabel,
+    grossPayTotal,
+    item.gross_pay,
+    deductions.cpp_deduction,
+    employerContributions.cpp_employer,
+    deductions.cpp2_deduction,
+    deductions.ei_deduction,
+    employerContributions.ei_employer,
+    deductions.federal_tax,
+    deductions.provincial_tax,
+    deductions.total_deductions,
+    deductions.net_pay,
+    deductions.country,
+    deductions.province,
+    deductions.tax_year,
+    deductions.pay_frequency,
+    deductions.pay_periods_per_year,
+    deductions.pensionable_earnings,
+    deductions.insurable_earnings,
+    deductions.ytd_cpp,
+    deductions.ytd_cpp2,
+    deductions.ytd_ei,
+    deductions.ytd_federal_tax,
+    deductions.ytd_provincial_tax,
+    new Date().toISOString(),
+    payrollItemId,
+    payrollPeriodId,
+  );
+
+  db.prepare(
+    `
+    UPDATE payroll_periods
+    SET updated_at = ?
+    WHERE id = ?
+    `,
+  ).run(new Date().toISOString(), payrollPeriodId);
+
+  const updatedPayroll = getPayrollDetails(payrollPeriodId);
+  const updatedItem = updatedPayroll.items.find((item) => item.id === payrollItemId);
+  insertAuditLog({
+    entityType: "payroll",
+    entityId: updatedPayroll.id,
+    employeeId: item.employee_id,
+    action: "holiday_updated",
+    changedFields: {
+      payroll_item_id: payrollItemId,
+      before: {
+        holiday_hours: item.holiday_hours,
+        holiday_pay: item.holiday_pay,
+        holiday_label: item.holiday_label,
+        gross_pay_total: item.gross_pay_total,
+      },
+      after: {
+        holiday_hours: updatedItem?.holiday_hours,
+        holiday_pay: updatedItem?.holiday_pay,
+        holiday_label: updatedItem?.holiday_label,
+        gross_pay_total: updatedItem?.gross_pay_total,
+      },
+    },
+    adminUser,
+  });
+
+  return updatedPayroll;
+}
+
+function calculatePayrollHours({ startDate, endDate }) {
+  const records = listTimeRecordsAscending({
+    startDate: `${startDate}T00:00:00`,
+    endDate: `${endDate}T23:59:59`,
+    recordStatus: "active",
+  });
+
+  const employeeDailyHours = new Map();
+  const openCheckIns = new Map();
+
+  for (const record of records) {
+    const employeeId = record.employee_id;
+    const employeeKey = String(employeeId);
+
+    if (!employeeDailyHours.has(employeeKey)) {
+      employeeDailyHours.set(employeeKey, {
+        employee_id: employeeId,
+        employee_name: record.employee_name,
+        daily_hours: new Map(),
+        holiday_hours: 0,
+        holiday_weighted_hours: 0,
+        holiday_labels: new Set(),
+      });
+    }
+
+    const employeeHours = employeeDailyHours.get(employeeKey);
+
+    if (!employeeHours.daily_hours.has(record.recorded_at.slice(0, 10))) {
+      employeeHours.daily_hours.set(record.recorded_at.slice(0, 10), {
+        clock_hours: 0,
+        manual_hours: 0,
+      });
+    }
+
+    if (record.entry_mode === "manual") {
+      const workDate = record.recorded_at.slice(0, 10);
+      if (record.manual_category === "holiday") {
+        const holidayHours = Number(record.worked_hours || 0);
+        const holidayMultiplier = Number(
+          record.holiday_multiplier || HOLIDAY_PAY_RULE.multiplier,
+        );
+        employeeHours.holiday_hours += holidayHours;
+        employeeHours.holiday_weighted_hours += holidayHours * holidayMultiplier;
+
+        if (record.holiday_label) {
+          employeeHours.holiday_labels.add(record.holiday_label);
+        }
+      } else {
+        const dailyHours = employeeHours.daily_hours.get(workDate);
+        dailyHours.manual_hours += Number(record.worked_hours || 0);
+      }
+      continue;
+    }
+
+    if (record.type === "check-in") {
+      openCheckIns.set(employeeId, record);
+      continue;
+    }
+
+    const openRecord = openCheckIns.get(employeeId);
+
+    if (!openRecord) {
+      continue;
+    }
+
+    const start = new Date(openRecord.recorded_at);
+    const end = new Date(record.recorded_at);
+    const durationInHours = (end - start) / (1000 * 60 * 60);
+
+    openCheckIns.delete(employeeId);
+
+    if (durationInHours <= 0) {
+      continue;
+    }
+
+    const workDate = openRecord.recorded_at.slice(0, 10);
+    const dailyHours = employeeHours.daily_hours.get(workDate) || {
+      clock_hours: 0,
+      manual_hours: 0,
+    };
+    dailyHours.clock_hours += durationInHours;
+    employeeHours.daily_hours.set(workDate, dailyHours);
+  }
+
+  return Array.from(employeeDailyHours.values()).map((employee) => {
+    let regularHours = 0;
+    let overtimeHours = 0;
+
+    for (const dailyHours of employee.daily_hours.values()) {
+      const clockHours = Number(dailyHours.clock_hours || 0);
+      const manualHours = Number(dailyHours.manual_hours || 0);
+
+      regularHours += Math.min(
+        clockHours,
+        PAYROLL_OVERTIME_RULE.regularHoursPerDay,
+      );
+      regularHours += manualHours;
+      overtimeHours += Math.max(
+        0,
+        clockHours - PAYROLL_OVERTIME_RULE.regularHoursPerDay,
+      );
+    }
+
+    const totalHours = regularHours + overtimeHours;
+
+    return {
+      employee_id: employee.employee_id,
+      employee_name: employee.employee_name,
+      regular_hours: Number(regularHours.toFixed(2)),
+      overtime_hours: Number(overtimeHours.toFixed(2)),
+      total_hours: Number(totalHours.toFixed(2)),
+      holiday_hours: Number(employee.holiday_hours.toFixed(2)),
+      holiday_weighted_hours: Number(employee.holiday_weighted_hours.toFixed(2)),
+      holiday_label:
+        employee.holiday_labels.size === 1
+          ? Array.from(employee.holiday_labels)[0]
+          : employee.holiday_labels.size > 1
+            ? "Holiday Pay"
+            : null,
+    };
+  });
+}
+
+module.exports = {
+  initializeDatabase,
+  listEmployees,
+  listAdminEmployees,
+  listTimeRecordAuditLogs,
+  listPayrollAuditLogs,
+  listEmployeeAuditLogs,
+  listAuditLogsPaginated,
+  listAuditLogsForExport,
+  createAdminSession,
+  getAdminSession,
+  deleteAdminSession,
+  cleanupExpiredAdminSessions,
+  getAdminLoginAttempt,
+  upsertAdminLoginAttempt,
+  clearAdminLoginAttempt,
+  cleanupAdminLoginAttempts,
+  findEmployeeById,
+  verifyEmployeePin,
+  createEmployee,
+  updateEmployeePayrollSettings,
+  getEmployeeDependencySummary,
+  deleteEmployee,
+  findTimeRecordById,
+  getLastTimeRecord,
+  createTimeRecord,
+  listTimeRecords,
+  listTimeRecordsPaginated,
+  summarizeTimeRecords,
+  createManualTimeRecord,
+  updateManualTimeRecord,
+  createManualHoursEntry,
+  updateManualHoursEntry,
+  deleteManualTimeRecord,
+  restoreManualTimeRecord,
+  listPayrollPeriods,
+  getPayrollDetails,
+  getPayrollPayslip,
+  generatePayroll,
+  recalculatePayroll,
+  approvePayroll,
+  updatePayrollItemHoliday,
+  PAYROLL_OVERTIME_RULE,
+  HOLIDAY_PAY_RULE,
+  VACATION_PAY_RULE,
+  VACATION_PAY_SCHEDULES,
+  DEFAULT_VACATION_PAY_SCHEDULE,
+  PAY_FREQUENCIES,
+  DEFAULT_PAY_FREQUENCY,
+  DEFAULT_AUDIT_PAGE_SIZE,
+  MAX_AUDIT_PAGE_SIZE,
+  databasePath,
+};

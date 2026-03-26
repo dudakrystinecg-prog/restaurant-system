@@ -1,0 +1,31 @@
+{
+  "name": "restaurant-system",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "npm run build:frontend",
+    "build:frontend": "npm --prefix kiosk run build",
+    "start:prod": "node -e \"process.env.NODE_ENV='production'; require('./server')\"",
+    "hash:admin": "node scripts/generate-admin-password-hash.js",
+    "clear:employees": "node scripts/clear-employees.js",
+    "pm2:start": "pm2 start ecosystem.config.js --env production",
+    "pm2:restart": "pm2 restart ecosystem.config.js --env production",
+    "backup:sqlite": "bash scripts/backup-sqlite.sh",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "tailwindcss": "^4.2.2"
+  }
+}

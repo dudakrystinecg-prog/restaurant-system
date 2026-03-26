@@ -1,0 +1,22 @@
+node_modules/
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# Runtime and test databases
+*.db
+data/*.db
+tmp/*.db
+
+# Build output
+kiosk/build/
+kiosk/node_modules/
+coverage/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
