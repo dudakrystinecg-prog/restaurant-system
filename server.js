@@ -2,6 +2,8 @@ require("dotenv").config();
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 5 } });
 const express = require("express");
 const cors = require("cors");
 const { verifySecret } = require("./security");
@@ -1789,22 +1791,25 @@ app.post("/api/admin/payrolls/:payrollId/items/:itemId/send", requireAdminAuth, 
 });
 
 // Messages send endpoint
-app.post("/api/admin/messages/send", requireAdminAuth, async (req, res) => {
+app.post("/api/admin/messages/send", requireAdminAuth, upload.array("attachments", 5), async (req, res) => {
   try {
-    const { recipientIds, subject, body, bccSelf } = req.body;
+    const recipientIds = JSON.parse(req.body.recipientIds || "[]");
+    const { subject, body, bccSelf } = req.body;
     if (!recipientIds || !recipientIds.length) return res.status(400).json({ error: "No recipients selected." });
     if (!subject?.trim()) return res.status(400).json({ error: "Subject is required." });
     if (!body?.trim()) return res.status(400).json({ error: "Message body is required." });
 
-    // Get employees with emails
     const allEmployees = listEmployees();
     const recipients = allEmployees.filter(e => recipientIds.includes(e.id) && e.email);
-
     if (!recipients.length) return res.status(400).json({ error: "None of the selected employees have email addresses." });
 
-    const bccEmail = bccSelf ? (req.adminSession.email || "") : undefined;
-    const results = await sendStaffMessage({ recipients, subject, body, bccEmail });
+    const bccEmail = bccSelf === "true" ? (req.adminSession.email || "") : undefined;
+    const attachments = (req.files || []).map(f => ({
+      filename: f.originalname,
+      content: f.buffer.toString("base64"),
+    }));
 
+    const results = await sendStaffMessage({ recipients, subject, body, bccEmail, attachments });
     res.json({ ok: true, sent: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length, results });
   } catch (err) {
     res.status(500).json({ error: err.message });

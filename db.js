@@ -1285,7 +1285,17 @@ function buildTimeRecordSelect(whereClause, orderClause, paginationClause = "") 
       tr.kiosk_id,
       tr.created_manually,
       tr.updated_at,
-      tr.deleted_at
+      tr.deleted_at,
+      CASE
+        WHEN tr.type = 'check-in' AND tr.deleted_at IS NULL AND NOT EXISTS (
+          SELECT 1 FROM time_records tr2
+          WHERE tr2.employee_id = tr.employee_id
+            AND tr2.type = 'check-out'
+            AND tr2.deleted_at IS NULL
+            AND tr2.recorded_at > tr.recorded_at
+        ) THEN 1
+        ELSE 0
+      END AS is_open
     FROM time_records tr
     INNER JOIN employees e ON e.id = tr.employee_id
     ${whereClause}

@@ -400,7 +400,7 @@ function buildTeamPayrollPrintHtml(payroll) {
       <div class="sheet">
         <div class="header">
           <h1 class="title">Team Payroll Package</h1>
-          <p class="subtitle">${payroll.start_date} to ${payroll.end_date} Ã‚Â· ${payroll.pay_frequency} Ã‚Â· ${payroll.status}</p>
+          <p class="subtitle">${payroll.start_date} to ${payroll.end_date} · ${payroll.pay_frequency} · ${payroll.status}</p>
         </div>
         <div class="summary">
           <div class="summary-card"><div class="summary-label">Gross</div><div class="summary-value">$${Number(payroll.totals.total_gross_pay || 0).toFixed(2)}</div></div>
@@ -965,7 +965,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
           </div>
           <div className="admin-team-toolbar__right">
             <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setAddUserOpen(o => !o)}>
-              {addUserOpen ? "Ã¢Å“â€¢ Cancel" : "+ Add admin"}
+              {addUserOpen ? "✕ Cancel" : "+ Add admin"}
             </button>
           </div>
         </div>
@@ -1015,7 +1015,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
                   </td>
                   <td className="emp-table__data">{user.email}</td>
                   <td><span className={`emp-status-badge ${user.active ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td>
-                  <td className="emp-table__data">{user.created_at ? new Date(user.created_at).toLocaleDateString("en-CA", { timeZone: TZ }) : "Ã¢â‚¬â€"}</td>
+                  <td className="emp-table__data">{user.created_at ? new Date(user.created_at).toLocaleDateString("en-CA", { timeZone: TZ }) : "—"}</td>
                   <td className="emp-table__actions-cell" style={{ whiteSpace: "nowrap" }}>
                     {!isMe && (
                       <>
@@ -1044,23 +1044,6 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
         </table>
       </div>
 
-      <div className="admin-panel">
-        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
-          <div className="admin-team-toolbar__left">
-            <h2 className="admin-panel__title">Email Configuration</h2>
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--c-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Sender</div>
-            <div style={{ marginTop: 2, fontWeight: 500 }}>Sushi House Banff &lt;payroll@mail.sushihousebanff.ca&gt;</div>
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            {testEmailStatus && <span style={{ fontSize: "0.85rem", color: testEmailStatus.includes("Error") ? "var(--c-accent)" : "var(--c-jade)" }}>{testEmailStatus}</span>}
-            <button className="admin-button admin-button--secondary admin-button--compact" onClick={handleTestEmail}>Send test email</button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1292,7 +1275,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
           </div>
           <div className="admin-team-toolbar__right">
             <select className="admin-select" value={selectedPayrollId} onChange={e => setSelectedPayrollId(e.target.value)} style={{ minWidth: 220 }}>
-              <option value="">Ã¢â‚¬â€ Select payroll period Ã¢â‚¬â€</option>
+              <option value="">— Select payroll period —</option>
               {approvedPayrolls.map(p => (
                 <option key={p.id} value={p.id}>{p.start_date} to {p.end_date}</option>
               ))}
@@ -1460,7 +1443,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                       <div className="admin-modal__list-detail">{selectedPayroll.start_date} to {selectedPayroll.end_date}</div>
                     )}
                     {missingCheque
-                      ? <div className="admin-modal__list-warn">Cheque number missing Ã¢â‚¬â€ send anyway?</div>
+                      ? <div className="admin-modal__list-warn">Cheque number missing — send anyway?</div>
                       : <div className="admin-modal__list-detail">Cheque No. {cheque}</div>
                     }
                   </div>
@@ -1483,6 +1466,7 @@ function MessagesView({ adminFetch, employees }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [bccSelf, setBccSelf] = useState(true);
+  const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -1520,30 +1504,26 @@ function MessagesView({ adminFetch, employees }) {
     setError("");
     setResult(null);
     try {
-      const r = await adminFetch("/api/admin/messages/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipientIds: selectedIds, subject, body, bccSelf }),
-      });
+      const fd = new FormData();
+      fd.append("recipientIds", JSON.stringify(selectedIds));
+      fd.append("subject", subject);
+      fd.append("body", body);
+      fd.append("bccSelf", String(bccSelf));
+      attachments.forEach(f => fd.append("attachments", f));
+      const r = await adminFetch("/api/admin/messages/send", { method: "POST", body: fd });
       const data = await r.json();
       if (!r.ok) setError(data.error || "Send failed.");
       else {
         setResult(data);
         setSentHistory((current) => [
-          {
-            id: Date.now(),
-            subject,
-            recipients: selectedIds.length,
-            sent: data.sent,
-            failed: data.failed,
-            sentAt: new Date().toISOString(),
-          },
+          { id: Date.now(), subject, recipients: selectedIds.length, sent: data.sent, failed: data.failed, sentAt: new Date().toISOString(), attachments: attachments.length },
           ...current,
         ]);
         window.localStorage.removeItem("admin-message-draft");
         setSubject("");
         setBody("");
         setSelectedIds([]);
+        setAttachments([]);
       }
     } catch (e) { setError(e.message); }
     setSending(false);
@@ -1564,7 +1544,7 @@ function MessagesView({ adminFetch, employees }) {
       {draftStatus && <div className="admin-alert admin-alert--success">{draftStatus}</div>}
       {result && (
         <div className="admin-alert admin-alert--success">
-          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` Ã‚Â· ${result.failed} failed` : ""}.
+          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` · ${result.failed} failed` : ""}.
         </div>
       )}
 
@@ -1621,6 +1601,25 @@ function MessagesView({ adminFetch, employees }) {
               <span className="admin-field__label">Message</span>
               <textarea className="admin-input admin-textarea" rows={8} value={body} onChange={e => setBody(e.target.value)} placeholder="Write your message here..." />
             </label>
+
+            <div>
+              <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-text-muted)", marginBottom: "0.5rem" }}>Attachments</div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", padding: "0.4rem 0.85rem", borderRadius: 8, border: "1.5px dashed rgba(138,128,120,0.35)", fontSize: "0.82rem", color: "var(--c-text-muted)", background: "rgba(74,64,64,0.03)" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                Attach file
+                <input type="file" multiple style={{ display: "none" }} onChange={e => setAttachments(prev => [...prev, ...Array.from(e.target.files)])} />
+              </label>
+              {attachments.length > 0 && (
+                <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                  {attachments.map((f, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", padding: "0.2rem 0.6rem", borderRadius: 20, background: "rgba(74,64,64,0.07)", fontSize: "0.78rem", color: "var(--c-text-primary)" }}>
+                      {f.name}
+                      <button onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-text-muted)", padding: 0, lineHeight: 1, fontSize: "1rem" }}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
               <input type="checkbox" checked={bccSelf} onChange={e => setBccSelf(e.target.checked)} />
@@ -2944,6 +2943,8 @@ function AdminView() {
             );
           }
 
+          if (activeSection === "settings") return null;
+
           return (
             <div className="ds-metric-strip">
               <div
@@ -3117,7 +3118,7 @@ function AdminView() {
                     <label className="admin-field">
                       <span className="admin-field__label">Monthly salary (auto)</span>
                       <input type="text" readOnly className="admin-input ef-input--readonly"
-                        value={employeeCreateForm.annual_salary ? `$${(Number(employeeCreateForm.annual_salary) / 12).toFixed(2)}` : "Ã¢â‚¬â€"} />
+                        value={employeeCreateForm.annual_salary ? `$${(Number(employeeCreateForm.annual_salary) / 12).toFixed(2)}` : "—"} />
                     </label>
                     <label className="admin-field">
                       <span className="admin-field__label">Vacation pay rule</span>
@@ -3195,7 +3196,7 @@ function AdminView() {
                 <input
                   type="text"
                   className="admin-team-search"
-                  placeholder="Search by nameÃ¢â‚¬Â¦"
+                  placeholder="Search by name…"
                   value={employeeSearch}
                   onChange={(e) => setEmployeeSearch(e.target.value)}
                 />
@@ -3206,7 +3207,7 @@ function AdminView() {
                     setSelectedEmployeeId(null);
                   }}
                 >
-                  {isEmployeeCreateOpen ? "Ã¢Å“â€¢ Cancel" : "+ New employee"}
+                  {isEmployeeCreateOpen ? "✕ Cancel" : "+ New employee"}
                 </button>
               </div>
             </div>
@@ -3273,7 +3274,7 @@ function AdminView() {
                           </div>
                         </td>
                         <td className="emp-table__data">
-                          {primaryDate ? new Date(primaryDate + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, year: "numeric", month: "short", day: "numeric" }) : "Ã¢â‚¬â€"}
+                          {primaryDate ? new Date(primaryDate + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, year: "numeric", month: "short", day: "numeric" }) : "—"}
                         </td>
                         <td>
                           <span className={`ps-badge ps-badge--${ps || "none"}`}>{proserveLabel}</span>
@@ -3307,7 +3308,7 @@ function AdminView() {
 
                             <div className="admin-employee-fields">
 
-                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Payroll Settings Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              {/* —— Payroll Settings —— */}
                               <div className="ef-section">
                                 <div className="ef-section__label">Payroll Settings</div>
                                 <div className="ef-section__fields">
@@ -3426,7 +3427,7 @@ function AdminView() {
                                       <label className="admin-field">
                                         <span className="admin-field__label">Monthly salary (auto)</span>
                                         <input type="text" readOnly className="admin-input ef-input--readonly"
-                                          value={draft.annual_salary ? `$${(Number(draft.annual_salary) / 12).toFixed(2)}` : "Ã¢â‚¬â€"} />
+                                          value={draft.annual_salary ? `$${(Number(draft.annual_salary) / 12).toFixed(2)}` : "—"} />
                                       </label>
                                       <label className="admin-field">
                                         <span className="admin-field__label">Vacation pay rule</span>
@@ -3455,7 +3456,7 @@ function AdminView() {
                                 </div>
                               </div>
 
-                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Personal Information Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              {/* —— Personal Information —— */}
                               <div className="ef-section">
                                 <div className="ef-section__label">Personal Information</div>
                                 <div className="ef-section__fields">
@@ -3496,7 +3497,7 @@ function AdminView() {
                                 </div>
                               </div>
 
-                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ ProServe Certification Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              {/* —— ProServe Certification —— */}
                               <div className="ef-section">
                                 <div className="ef-section__label">ProServe Certification</div>
                                 <div className="ef-section__fields ef-section__fields--2col">
@@ -3528,7 +3529,7 @@ function AdminView() {
                                 </div>
                               </div>
 
-                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Record of Employment Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              {/* —— Record of Employment —— */}
                               <div className="ef-section">
                                 <div className="ef-section__label">Record of Employment (ROE)</div>
                                 <div className="ef-section__fields">
@@ -3555,7 +3556,7 @@ function AdminView() {
                                 </div>
                               </div>
 
-                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Benefits & Notes Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              {/* —— Benefits & Notes —— */}
                               <div className="ef-section">
                                 <div className="ef-section__label">Benefits &amp; Notes</div>
                                 <div className="ef-section__fields" style={{ gridTemplateColumns: "1fr" }}>
@@ -4004,6 +4005,7 @@ function AdminView() {
                     <th></th>
                     <th>Employee</th>
                     <th>Type</th>
+                    <th>Status</th>
                     <th>Source</th>
                     <th>Note / Kiosk ID</th>
                     <th></th>
@@ -4045,9 +4047,9 @@ function AdminView() {
                           const initial = (record.employee_name || "?")[0].toUpperCase();
                           const timeStr = record.recorded_at
                             ? new Date(record.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
-                            : "Ã¢â‚¬â€";
-                          const badgeClass = record.entry_type === "check-in" ? "cr-type-badge--in"
-                            : record.entry_type === "check-out" ? "cr-type-badge--out"
+                            : "—";
+                          const badgeClass = record.type === "check-in" ? "cr-type-badge--in"
+                            : record.type === "check-out" ? "cr-type-badge--out"
                             : "cr-type-badge--manual";
                           return (
                             <tr key={record.id} className={`cr-record-row ${record.deleted_at ? "cr-record-row--deleted" : ""}`}>
@@ -4058,10 +4060,17 @@ function AdminView() {
                               <td className="cr-td__name">{record.employee_name}</td>
                               <td>
                                 <span className={`cr-type-badge ${badgeClass}`}>
-                                  {record.entry_type === "check-in" ? "In" : record.entry_type === "check-out" ? "Out" : record.entry_mode === "manual" ? "Manual" : record.entry_type}
+                                  {record.type === "check-in" ? "Check in" : record.type === "check-out" ? "Check out" : record.entry_mode === "manual" ? "Manual" : record.type}
                                 </span>
                               </td>
-                              <td className="cr-td__muted">{record.entry_mode || "Ã¢â‚¬â€"}</td>
+                              <td>
+                                {record.is_open ? (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", padding: "0.2rem 0.6rem", borderRadius: 20, fontSize: "0.73rem", fontWeight: 600, background: "rgba(204,32,32,0.10)", color: "var(--c-red)", whiteSpace: "nowrap" }}>
+                                    Missing check-out
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="cr-td__muted">{record.entry_mode || "—"}</td>
                               <td className="cr-td__note">
                                 {record.note || ""}
                                 {record.kiosk_id ? <span style={{ opacity: 0.6 }}> #{record.kiosk_id}</span> : null}
