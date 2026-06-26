@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   UsersRound, Clock, StickyNote, SendHorizontal, Mail, History,
   Settings2, ArrowLeft, LogOut, TriangleAlert, Calendar,
-  CheckCircle, IdCard, Hourglass, UserPlus, Timer, ClipboardList
+  CheckCircle, IdCard, Timer, ClipboardList, Pencil
 } from "lucide-react";
 import "./AdminView.css";
 import "./PayrollPayslip.css";
@@ -331,7 +331,7 @@ function buildPayslipPrintHtml(payslip) {
             <td><span class="meta-label">Total Hours</span><span class="meta-value">${formatHours(payslip.header.total_hours)}</span></td>
             <td><span class="meta-label">Wage Rate</span><span class="meta-value">${payslip.header.wage_rate}</span></td>
             <td><span class="meta-label">Pay Date</span><span class="meta-value">${payslip.header.pay_date}</span></td>
-            <td><span class="meta-label">Payment Reference</span><span class="meta-value">${payslip.header.payment_reference || "-"}</span></td>
+            <td><span class="meta-label">Cheque No.</span><span class="meta-value">${payslip.header.payment_reference || "-"}</span></td>
           </tr>
         </table>
         <table class="statement-table">
@@ -400,7 +400,7 @@ function buildTeamPayrollPrintHtml(payroll) {
       <div class="sheet">
         <div class="header">
           <h1 class="title">Team Payroll Package</h1>
-          <p class="subtitle">${payroll.start_date} to ${payroll.end_date} · ${payroll.pay_frequency} · ${payroll.status}</p>
+          <p class="subtitle">${payroll.start_date} to ${payroll.end_date} Ã‚Â· ${payroll.pay_frequency} Ã‚Â· ${payroll.status}</p>
         </div>
         <div class="summary">
           <div class="summary-card"><div class="summary-label">Gross</div><div class="summary-value">$${Number(payroll.totals.total_gross_pay || 0).toFixed(2)}</div></div>
@@ -536,8 +536,15 @@ function proserveStatus(expiry) {
   if (!expiry) return null;
   const days = Math.floor((new Date(expiry) - new Date()) / 86400000);
   if (days < 0) return "expired";
-  if (days <= 60) return "expiring";
+  if (days < 30) return "expiring";
   return "ok";
+}
+
+function getProServeBadgeLabel(status) {
+  if (status === "ok") return "Valid";
+  if (status === "expiring") return "Expiring";
+  if (status === "expired") return "Expired";
+  return "No ProServe";
 }
 
 function FormSection({ icon, label }) {
@@ -574,44 +581,52 @@ const FIELD_LABELS = {
   kiosk_id: "Kiosk ID",
 };
 
+function AuditActionBadge({ action }) {
+  const a = (action || '').toLowerCase();
+  let color = 'var(--c-text-muted)';
+  let bg = 'rgba(138,128,120,0.10)';
+  if (a.includes('creat') || a.includes('add') || a.includes('restor')) { bg = 'rgba(46,125,82,0.12)'; color = 'var(--c-jade)'; }
+  else if (a.includes('delet') || a.includes('remov')) { bg = 'rgba(204,32,32,0.10)'; color = 'var(--c-red)'; }
+  else if (a.includes('edit') || a.includes('updat') || a.includes('approv')) { bg = 'rgba(192,112,32,0.12)'; color = 'var(--c-amber)'; }
+  const label = (action || '').replace(/_/g, ' ');
+  return <span style={{ display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600, background: bg, color }}>{label}</span>;
+}
+
 function AuditDiff({ changedFields }) {
-  if (!changedFields) return <span style={{ color: "var(--c-text-muted)", fontSize: "0.78rem" }}>—</span>;
+  if (!changedFields) return <span style={{ color: 'var(--c-text-muted)', fontSize: '0.78rem', fontStyle: 'italic' }}>No changes recorded</span>;
   let parsed = changedFields;
-  if (typeof parsed === "string") {
-    try { parsed = JSON.parse(parsed); } catch { return <pre style={{ fontSize: "0.75rem", whiteSpace: "pre-wrap" }}>{changedFields}</pre>; }
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch { return <span style={{ fontSize: '0.75rem', color: 'var(--c-text-muted)' }}>—</span>; }
   }
-  const { before, after } = parsed;
-  const keys = Object.keys(after || {}).filter(k => k !== "pin_hash" && k !== "pin");
-  const MAX_SHOW = 4;
-  const shown = keys.slice(0, MAX_SHOW);
-  const rest = keys.length - MAX_SHOW;
-  const isCreation = !before || Object.keys(before).length === 0;
+  const { after } = parsed;
+  if (!after) return <span style={{ color: 'var(--c-text-muted)', fontSize: '0.78rem', fontStyle: 'italic' }}>No changes recorded</span>;
+  const SKIP = new Set(['pin_hash', 'pin', 'id', 'employee_id', 'created_at', 'updated_at']);
+  const CHIP_COLORS = {
+    type:                { bg: 'rgba(46,125,82,0.10)',   color: 'var(--c-jade)' },
+    source:              { bg: 'rgba(192,112,32,0.10)',  color: 'var(--c-amber)' },
+    hours:               { bg: 'rgba(74,64,64,0.08)',    color: 'var(--c-text-primary)' },
+    overtime_multiplier: { bg: 'rgba(74,64,64,0.08)',    color: 'var(--c-text-primary)' },
+    holiday_type:        { bg: 'rgba(192,112,32,0.10)',  color: 'var(--c-amber)' },
+    holiday_hours:       { bg: 'rgba(74,64,64,0.08)',    color: 'var(--c-text-primary)' },
+  };
+  const DISPLAY_KEYS = ['type', 'source', 'hours', 'holiday_type', 'holiday_hours', 'overtime_multiplier', 'name', 'wage', 'pay_type', 'active'];
+  const chips = DISPLAY_KEYS.filter(k => !SKIP.has(k) && after[k] !== undefined && after[k] !== null && after[k] !== '');
+  if (chips.length === 0) return <span style={{ color: 'var(--c-text-muted)', fontSize: '0.78rem', fontStyle: 'italic' }}>No changes recorded</span>;
   return (
-    <div className="audit-diff">
-      {shown.map(k => {
-        const label = FIELD_LABELS[k] || k;
-        const newVal = String(after[k] ?? "");
-        const oldVal = before ? String(before[k] ?? "") : null;
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+      {chips.map(k => {
+        const val = String(after[k]);
+        const s = CHIP_COLORS[k] || { bg: 'rgba(74,64,64,0.07)', color: 'var(--c-text-muted)' };
+        const label = k === 'hours' || k === 'holiday_hours' ? val + ' h' : k === 'overtime_multiplier' ? val + 'x' : val;
         return (
-          <div key={k} className="audit-diff__row">
-            <span className="audit-diff__key">{label}</span>
-            {isCreation || oldVal === null ? (
-              <span className="audit-diff__created">{newVal || "—"}</span>
-            ) : (
-              <>
-                {oldVal !== newVal && <span className="audit-diff__old">{oldVal || "—"}</span>}
-                {oldVal !== newVal && <span className="audit-diff__arrow">→</span>}
-                <span className="audit-diff__new">{newVal || "—"}</span>
-              </>
-            )}
-          </div>
+          <span key={k} style={{ padding: '0.15rem 0.55rem', borderRadius: 20, fontSize: '0.73rem', fontWeight: 500, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>
+            {label.charAt(0).toUpperCase() + label.slice(1)}
+          </span>
         );
       })}
-      {rest > 0 && <div className="audit-diff__more">+{rest} more field{rest > 1 ? "s" : ""}</div>}
     </div>
   );
 }
-
 function SectionTabs({ tabs, activeTab, onChange, columnsClassName = "grid-cols-4" }) {
   const widthClass =
     columnsClassName === "grid-cols-3" ? "admin-tabs--three" : "admin-tabs--four";
@@ -753,7 +768,7 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
               ["Total Hours", formatHours(payslip.header.total_hours)],
               ["Wage Rate", payslip.header.wage_rate],
               ["Pay Date", payslip.header.pay_date],
-              ["Payment Reference", payslip.header.payment_reference || "-"],
+              ["Cheque No.", payslip.header.payment_reference || "-"],
             ].map(([label, value]) => (
               <td key={label}>
                 <span className="payslip-meta-table__label">{label}</span>
@@ -950,7 +965,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
           </div>
           <div className="admin-team-toolbar__right">
             <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setAddUserOpen(o => !o)}>
-              {addUserOpen ? "✕ Cancel" : "+ Add admin"}
+              {addUserOpen ? "Ã¢Å“â€¢ Cancel" : "+ Add admin"}
             </button>
           </div>
         </div>
@@ -1000,7 +1015,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
                   </td>
                   <td className="emp-table__data">{user.email}</td>
                   <td><span className={`emp-status-badge ${user.active ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td>
-                  <td className="emp-table__data">{user.created_at ? new Date(user.created_at).toLocaleDateString("en-CA", { timeZone: TZ }) : "—"}</td>
+                  <td className="emp-table__data">{user.created_at ? new Date(user.created_at).toLocaleDateString("en-CA", { timeZone: TZ }) : "Ã¢â‚¬â€"}</td>
                   <td className="emp-table__actions-cell" style={{ whiteSpace: "nowrap" }}>
                     {!isMe && (
                       <>
@@ -1058,13 +1073,41 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const [editingCheques, setEditingCheques] = useState({});
   const [selectedItems, setSelectedItems] = useState({});
   const [previewPayslip, setPreviewPayslip] = useState(null);
+  const [previewItemId, setPreviewItemId] = useState(null);
+  const previewItemIdRef = useRef(null);
   const [sending, setSending] = useState({});
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   // confirmModal: null | { mode: "bulk", toSend: [] } | { mode: "single", item: {} }
   const [confirmModal, setConfirmModal] = useState(null);
 
-  const selectedPayroll = payrolls?.find(p => String(p.id) === String(selectedPayrollId));
+  const approvedPayrolls = useMemo(
+    () => (payrolls || [])
+      .filter(p => p.status === "approved")
+      .sort((left, right) => {
+        const rightDate = new Date(right.end_date || right.created_at || 0).getTime();
+        const leftDate = new Date(left.end_date || left.created_at || 0).getTime();
+        if (rightDate !== leftDate) return rightDate - leftDate;
+        return Number(right.id || 0) - Number(left.id || 0);
+      }),
+    [payrolls],
+  );
+  const selectedPayroll = approvedPayrolls.find(p => String(p.id) === String(selectedPayrollId));
+
+  useEffect(() => {
+    if (approvedPayrolls.length === 0) {
+      if (selectedPayrollId) setSelectedPayrollId("");
+      return;
+    }
+
+    const currentStillExists = approvedPayrolls.some(
+      (payroll) => String(payroll.id) === String(selectedPayrollId),
+    );
+
+    if (!selectedPayrollId || !currentStillExists) {
+      setSelectedPayrollId(String(approvedPayrolls[0].id));
+    }
+  }, [approvedPayrolls, selectedPayrollId]);
 
   useEffect(() => {
     if (!selectedPayrollId) return;
@@ -1077,9 +1120,15 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
         initialCheques[item.id] = item.payment_reference || "";
         if (item.payment_reference) initialConfirmed[item.id] = true;
       });
+      const initialSelected = {};
+      payrollItems.forEach(item => {
+        if (item.employee_email && item.send_status !== "sent") {
+          initialSelected[item.id] = true;
+        }
+      });
       setChequeInputs(initialCheques);
       setConfirmedCheques(initialConfirmed);
-      setSelectedItems({});
+      setSelectedItems(initialSelected);
     });
   }, [selectedPayrollId, adminFetch]);
 
@@ -1103,7 +1152,12 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
         setConfirmedCheques(newConfirmed);
         setItems(prev => prev.map(i => {
           const saved = itemsToSave.find(s => s.id === i.id);
-          return saved && i.send_status !== "sent" ? { ...i, send_status: saved.send_status } : i;
+          if (!saved) return i;
+          return {
+            ...i,
+            payment_reference: saved.payment_reference,
+            send_status: i.send_status === "sent" ? "sent" : saved.send_status,
+          };
         }));
         setFeedback("Saved successfully.");
         setTimeout(() => setFeedback(""), 3000);
@@ -1133,6 +1187,50 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
     setTimeout(() => setFeedback(""), 3000);
   };
 
+  const handleSaveCheque = async (itemId, chequeVal) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item) return;
+    try {
+      const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: [{
+            id: itemId,
+            payment_reference: chequeVal,
+            send_status: item.send_status === "sent" ? "sent" : chequeVal ? "ready" : "pending",
+          }],
+        }),
+      });
+      if (r.ok) {
+        setConfirmedCheques(s => ({ ...s, [itemId]: true }));
+        setEditingCheques(s => ({ ...s, [itemId]: false }));
+        setItems(prev => prev.map(i => i.id === itemId
+          ? {
+              ...i,
+              payment_reference: chequeVal,
+              send_status: i.send_status === "sent" ? "sent" : chequeVal ? "ready" : "pending",
+            }
+          : i
+        ));
+        // If preview is open for this item, update payment_reference in place
+        if (previewItemIdRef.current === itemId) {
+          setPreviewPayslip(prev => prev ? {
+            ...prev,
+            header: {
+              ...prev.header,
+              payment_reference: chequeVal,
+              cheque_no: chequeVal,
+            },
+          } : prev);
+        }
+      } else {
+        const d = await r.json();
+        setError(d.error || "Failed to save cheque number.");
+      }
+    } catch (e) { setError(e.message); }
+  };
+
   const handleSendSelected = () => {
     const toSend = items.filter(item => selectedItems[item.id] && item.employee_email);
     if (toSend.length === 0) { setError("No employees selected or no emails registered."); return; }
@@ -1140,9 +1238,17 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   };
 
   const handleViewPayslip = async (itemId) => {
+    if (previewItemIdRef.current === itemId) {
+      setPreviewPayslip(null); setPreviewItemId(null); previewItemIdRef.current = null; return;
+    }
     try {
       const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items/${itemId}/payslip`);
-      if (r.ok) { const data = await r.json(); setPreviewPayslip(data); }
+      if (r.ok) {
+        const data = await r.json();
+        setPreviewPayslip(data);
+        setPreviewItemId(itemId);
+        previewItemIdRef.current = itemId;
+      }
     } catch (_) {}
   };
 
@@ -1169,8 +1275,6 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const selectedCount = Object.values(selectedItems).filter(Boolean).length;
   const allSelected = items.length > 0 && items.every(i => selectedItems[i.id]);
 
-  const approvedPayrolls = (payrolls || []).filter(p => p.status === "approved");
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       {feedback && <div className="admin-alert admin-alert--success">{feedback}</div>}
@@ -1179,7 +1283,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
       <div className="admin-panel">
         <div className="admin-team-toolbar" style={{ marginBottom: items.length > 0 ? "1.25rem" : 0 }}>
           <div className="admin-team-toolbar__left">
-            <h2 className="admin-panel__title">Pay &amp; Send</h2>
+            <h2 className="admin-panel__title">Payroll Review &amp; Send</h2>
             {selectedPayroll && (
               <span className="admin-team-header__count">
                 {selectedPayroll.start_date} to {selectedPayroll.end_date} - {items.length} employee{items.length !== 1 ? "s" : ""} - {sentCount} sent
@@ -1188,7 +1292,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
           </div>
           <div className="admin-team-toolbar__right">
             <select className="admin-select" value={selectedPayrollId} onChange={e => setSelectedPayrollId(e.target.value)} style={{ minWidth: 220 }}>
-              <option value="">— Select payroll period —</option>
+              <option value="">Ã¢â‚¬â€ Select payroll period Ã¢â‚¬â€</option>
               {approvedPayrolls.map(p => (
                 <option key={p.id} value={p.id}>{p.start_date} to {p.end_date}</option>
               ))}
@@ -1268,22 +1372,31 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                       <td style={{ textAlign: "right", fontWeight: 700, color: "var(--c-text-primary)" }}>${Number(item.net_pay || 0).toFixed(2)}</td>
                       <td>
                         {isConfirmed && !isEditing ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                            <span style={{ fontWeight: 600, color: "var(--c-jade)" }}>No. {chequeVal}</span>
-                            <button className="cr-action-btn" onClick={() => setEditingCheques(s => ({ ...s, [item.id]: true }))}>Edit</button>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                            <span style={{ fontWeight: 600, fontSize: "0.85rem", color: "var(--c-jade)" }}>No. {chequeVal}</span>
+                            <button
+                              title="Edit cheque number"
+                              style={{ background: "none", border: "none", cursor: "pointer", padding: "2px", color: "var(--c-text-muted)", display: "flex", alignItems: "center" }}
+                              onClick={() => setEditingCheques(s => ({ ...s, [item.id]: true }))}
+                            >
+                              <Pencil size={13} strokeWidth={1.8} />
+                            </button>
                           </div>
                         ) : (
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
                             <input
                               className="admin-input"
-                              style={{ width: 90, padding: "0.3rem 0.5rem", fontSize: "0.85rem" }}
+                              style={{ width: 86, padding: "0.3rem 0.5rem", fontSize: "0.82rem" }}
                               placeholder="No."
                               value={chequeVal}
                               onChange={e => setChequeInputs(s => ({ ...s, [item.id]: e.target.value }))}
+                              onKeyDown={e => {
+                                if (e.key === "Enter" && chequeVal) handleSaveCheque(item.id, chequeVal);
+                              }}
                             />
                             <button className="cr-action-btn" onClick={() => {
-                              if (chequeVal) { setConfirmedCheques(s => ({ ...s, [item.id]: true })); setEditingCheques(s => ({ ...s, [item.id]: false })); }
-                            }}>Confirm</button>
+                              if (chequeVal) handleSaveCheque(item.id, chequeVal);
+                            }}>OK</button>
                           </div>
                         )}
                       </td>
@@ -1298,12 +1411,12 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                         )}
                       </td>
                     </tr>,
-                    previewPayslip && previewPayslip.employee_name === item.employee_name ? (
+                    previewPayslip && previewItemId === item.id ? (
                       <tr key={`preview-${item.id}`} className="emp-detail-row">
                         <td colSpan={8} className="emp-detail-cell">
                           <div className="admin-employee-inline-detail">
                             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
-                              <button className="admin-employee-card-btn admin-employee-card-btn--close" onClick={() => setPreviewPayslip(null)}>Close preview</button>
+                              <button className="admin-employee-card-btn admin-employee-card-btn--close" onClick={() => { setPreviewPayslip(null); setPreviewItemId(null); previewItemIdRef.current = null; }}>Close preview</button>
                             </div>
                             {typeof buildPayslipPrintHtml === "function" && (
                               <div dangerouslySetInnerHTML={{ __html: buildPayslipPrintHtml(previewPayslip) }} />
@@ -1347,7 +1460,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                       <div className="admin-modal__list-detail">{selectedPayroll.start_date} to {selectedPayroll.end_date}</div>
                     )}
                     {missingCheque
-                      ? <div className="admin-modal__list-warn">Cheque number missing — send anyway?</div>
+                      ? <div className="admin-modal__list-warn">Cheque number missing Ã¢â‚¬â€ send anyway?</div>
                       : <div className="admin-modal__list-detail">Cheque No. {cheque}</div>
                     }
                   </div>
@@ -1451,7 +1564,7 @@ function MessagesView({ adminFetch, employees }) {
       {draftStatus && <div className="admin-alert admin-alert--success">{draftStatus}</div>}
       {result && (
         <div className="admin-alert admin-alert--success">
-          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` · ${result.failed} failed` : ""}.
+          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` Ã‚Â· ${result.failed} failed` : ""}.
         </div>
       )}
 
@@ -1604,10 +1717,10 @@ function AdminView() {
   const [payrollPeriods, setPayrollPeriods] = useState([]);
   const [selectedPayroll, setSelectedPayroll] = useState(null);
   const [isGeneratingPayroll, setIsGeneratingPayroll] = useState(false);
+  const [showPayrollRules, setShowPayrollRules] = useState(false);
   const [payrollConfig, setPayrollConfig] = useState(null);
   const [payrollHolidayInputs, setPayrollHolidayInputs] = useState({});
   const [salariedBonusInputs, setSalariedBonusInputs] = useState({});
-  const [expandedEmployeeDetails, setExpandedEmployeeDetails] = useState({});
   const [showClockForm, setShowClockForm] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
@@ -2173,6 +2286,7 @@ function AdminView() {
   };
 
   const handleSelectPayroll = async (payrollId) => {
+    if (selectedPayroll?.id === payrollId) { setSelectedPayroll(null); return; }
     setError("");
     setSelectedPayslip(null);
     try {
@@ -2546,15 +2660,15 @@ function AdminView() {
       return;
     }
 
-    if (!filteredAdminEmployees.some((employee) => employee.id === selectedEmployeeId)) {
-      setSelectedEmployeeId(filteredAdminEmployees[0].id);
+    if (selectedEmployeeId !== null && !filteredAdminEmployees.some((employee) => employee.id === selectedEmployeeId)) {
+      setSelectedEmployeeId(null);
     }
   }, [filteredAdminEmployees, selectedEmployeeId]);
   const sectionTabs = [
     { id: "employees", label: "Team", kicker: "People" },
     { id: "time-records", label: "Clock", kicker: "Time" },
     { id: "payroll", label: "Payroll", kicker: "Finance" },
-    { id: "payroll-review", label: "Pay & Send", kicker: "Review" },
+    { id: "payroll-review", label: "Review & Send", kicker: "Payroll" },
     { id: "messages", label: "Messages", kicker: "Staff" },
     { id: "audit-logs", label: "Audit Log", kicker: "History" },
     { id: "settings", label: "Settings", kicker: "Config" },
@@ -2663,8 +2777,13 @@ function AdminView() {
 
         {/* Metric strip - per section */}
         {(() => {
+          if (activeSection === "payroll-review" || activeSection === "messages") {
+            return null;
+          }
+
           const activeCount = adminEmployees.filter(e => e.active).length;
           const totalHours = summary.totals.payroll_ready_hours || 0;
+          const clockTotalHours = summary.totals.total_hours || 0;
           const totalRecords = summary.totals.total_records || 0;
           const proserveAlerts = adminEmployees.filter(e => {
             const s = proserveStatus(e.proserve_expiry);
@@ -2674,46 +2793,55 @@ function AdminView() {
           if (activeSection === "time-records") {
             return (
               <div className="ds-metric-strip">
-                <div className="ds-metric-card ds-metric-card--primary ds-metric-card--clickable" onClick={() => setActiveSection("time-records")}>
+                <div
+                  className="ds-metric-card ds-metric-card--primary ds-metric-card--clickable"
+                  onClick={() => {
+                    setActiveSection("time-records");
+                    setOpenOnly(false);
+                  }}
+                >
                   <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon">
-                      <span className="ds-metric-live-dot" />
-                    </div>
+                    <div className="ds-metric-card__icon"><span className="ds-metric-live-dot" /></div>
                     <span className="ds-metric-card__tag">live</span>
                   </div>
                   <div className="ds-metric-card__number">{clockStats.currentlyWorking}</div>
-                  <div className="ds-metric-card__label">Currently working →</div>
+                  <div className="ds-metric-card__label">Currently working</div>
                   <UsersRound className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.07)" }} />
                 </div>
 
-                <div className="ds-metric-card ds-metric-card--warm ds-metric-card--clickable">
+                <div
+                  className="ds-metric-card ds-metric-card--warm ds-metric-card--clickable"
+                  onClick={() => {
+                    setActiveSection("time-records");
+                    setPage(1);
+                    setOpenOnly(true);
+                  }}
+                >
                   <div className="ds-metric-card__top">
                     <div className="ds-metric-card__icon">
-                      {clockStats.allOpen > 0 ? <TriangleAlert size={16} strokeWidth={1.8} /> : <CheckCircle size={16} strokeWidth={1.8} />}
+                      {clockStats.allOpen > 0 ? <TriangleAlert size={16} strokeWidth={1.5} /> : <CheckCircle size={16} strokeWidth={1.5} />}
                     </div>
                     <span className="ds-metric-card__tag">{clockStats.allOpen > 0 ? "needs review" : "all matched"}</span>
                   </div>
                   <div className="ds-metric-card__number">{clockStats.allOpen}</div>
-                  <div className="ds-metric-card__label">Open check-ins →</div>
-                  <TriangleAlert className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(200,160,0,0.08)" }} />
+                  <div className="ds-metric-card__label">Missing clock out</div>
+                  <TriangleAlert className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(122,88,0,0.20)" }} />
                 </div>
 
-                <div className="ds-metric-card ds-metric-card--clickable">
+                <div
+                  className="ds-metric-card ds-metric-card--jade ds-metric-card--clickable"
+                  onClick={() => {
+                    setActiveSection("time-records");
+                    setOpenOnly(false);
+                  }}
+                >
                   <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon"><Clock size={16} strokeWidth={1.8} /></div>
-                    <span className="ds-metric-card__tag">recent</span>
+                    <div className="ds-metric-card__icon"><Timer size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">period</span>
                   </div>
-                  <div className="ds-metric-card__number ds-metric-card__value--sm">
-                    {clockStats.lastEvent
-                      ? new Date(clockStats.lastEvent.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
-                      : "—"}
-                  </div>
-                  <div className="ds-metric-card__label">
-                    {clockStats.lastEvent
-                      ? `${clockStats.lastEvent.employee_name} · ${clockStats.lastEvent.entry_type === "check-in" ? "check-in" : "check-out"} →`
-                      : "No events yet"}
-                  </div>
-                  <Clock className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(200,168,112,0.10)" }} />
+                  <div className="ds-metric-card__number">{clockTotalHours.toFixed(1)}</div>
+                  <div className="ds-metric-card__label">Total hours</div>
+                  <Timer className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(74,64,64,0.20)" }} />
                 </div>
 
                 {(() => {
@@ -2725,15 +2853,15 @@ function AdminView() {
                   return (
                     <div className="ds-metric-card ds-metric-card--clickable" onClick={() => setActiveSection("payroll")}>
                       <div className="ds-metric-card__top">
-                        <div className="ds-metric-card__icon"><Calendar size={16} strokeWidth={1.8} /></div>
+                        <div className="ds-metric-card__icon"><Calendar size={16} strokeWidth={1.5} /></div>
                         <span className="ds-metric-card__tag">Day {day}/{daysInMonth}</span>
                       </div>
                       <div className="ds-metric-card__number ds-metric-card__value--sm">{monthLabel}</div>
                       <div className="ds-metric-progress-wrap">
                         <div className="ds-metric-progress-bar" style={{ width: `${pct}%` }} />
                       </div>
-                      <div className="ds-metric-card__label">Current pay period →</div>
-                      <Calendar className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(138,128,120,0.08)" }} />
+                      <div className="ds-metric-card__label">Pay period</div>
+                      <Calendar className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(74,64,64,0.20)" }} />
                     </div>
                   );
                 })()}
@@ -2742,52 +2870,86 @@ function AdminView() {
           }
 
           if (activeSection === "employees") {
-            const expiredCount = adminEmployees.filter(e => proserveStatus(e.proserve_expiry) === "expired").length;
-            const expiringCount = adminEmployees.filter(e => proserveStatus(e.proserve_expiry) === "expiring").length;
-            const now = new Date();
-            const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-            const newThisMonth = adminEmployees.filter(e => e.start_date && e.start_date >= thisMonthStart).length;
             return (
               <div className="ds-metric-strip">
-                <div className="ds-metric-card ds-metric-card--primary">
+                <div
+                  className="ds-metric-card ds-metric-card--primary ds-metric-card--clickable"
+                  onClick={() => {
+                    setActiveSection("time-records");
+                    setOpenOnly(false);
+                  }}
+                >
                   <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon"><UsersRound size={16} strokeWidth={1.8} /></div>
-                    <span className="ds-metric-card__tag">active</span>
+                    <div className="ds-metric-card__icon"><span className="ds-metric-live-dot" /></div>
+                    <span className="ds-metric-card__tag">live</span>
                   </div>
-                  <div className="ds-metric-card__number">{activeCount}</div>
-                  <div className="ds-metric-card__label">Team members</div>
+                  <div className="ds-metric-card__number">{clockStats.currentlyWorking}</div>
+                  <div className="ds-metric-card__label">Currently working</div>
+                  <UsersRound className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.07)" }} />
                 </div>
-                <div className={`ds-metric-card ${expiredCount > 0 ? "ds-metric-card--warn" : ""}`}>
+
+                <div
+                  className="ds-metric-card ds-metric-card--warm ds-metric-card--clickable"
+                  onClick={() => {
+                    setActiveSection("time-records");
+                    setPage(1);
+                    setOpenOnly(true);
+                  }}
+                >
                   <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.8} /></div>
-                    <span className="ds-metric-card__tag">{expiredCount > 0 ? "expired" : "ok"}</span>
+                    <div className="ds-metric-card__icon">
+                      {clockStats.allOpen > 0 ? <TriangleAlert size={16} strokeWidth={1.5} /> : <CheckCircle size={16} strokeWidth={1.5} />}
+                    </div>
+                    <span className="ds-metric-card__tag">{clockStats.allOpen > 0 ? "needs review" : "all matched"}</span>
                   </div>
-                  <div className="ds-metric-card__number">{expiredCount}</div>
-                  <div className="ds-metric-card__label">ProServe expired</div>
+                  <div className="ds-metric-card__number">{clockStats.allOpen}</div>
+                  <div className="ds-metric-card__label">Open check-ins</div>
+                  <TriangleAlert className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(122,88,0,0.20)" }} />
                 </div>
-                <div className={`ds-metric-card ${expiringCount > 0 ? "ds-metric-card--warn" : ""}`}>
+
+                <div
+                  className={`ds-metric-card ds-metric-card--clickable ${proserveAlerts > 0 ? "ds-metric-card--warn" : ""}`}
+                  onClick={() => setActiveSection("employees")}
+                >
                   <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon"><Hourglass size={16} strokeWidth={1.8} /></div>
-                    <span className="ds-metric-card__tag">{expiringCount > 0 ? "soon" : "ok"}</span>
+                    <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.5} /></div>
+                    <span className="ds-metric-card__tag">{proserveAlerts > 0 ? "alert" : "ok"}</span>
                   </div>
-                  <div className="ds-metric-card__number">{expiringCount}</div>
-                  <div className="ds-metric-card__label">Expiring in 30 days</div>
+                  <div className="ds-metric-card__number">{proserveAlerts}</div>
+                  <div className="ds-metric-card__label">ProServe alerts</div>
+                  <IdCard className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(74,64,64,0.20)" }} />
                 </div>
-                <div className="ds-metric-card">
-                  <div className="ds-metric-card__top">
-                    <div className="ds-metric-card__icon"><UserPlus size={16} strokeWidth={1.8} /></div>
-                    <span className="ds-metric-card__tag">this month</span>
-                  </div>
-                  <div className="ds-metric-card__number">{newThisMonth}</div>
-                  <div className="ds-metric-card__label">New this month</div>
-                </div>
+                {(() => {
+                  const now = new Date();
+                  const day = Number(now.toLocaleDateString("en-CA", { timeZone: TZ, day: "numeric" }));
+                  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                  const monthLabel = now.toLocaleDateString("en-CA", { timeZone: TZ, month: "long", year: "numeric" });
+                  const pct = Math.round((day / daysInMonth) * 100);
+                  return (
+                    <div className="ds-metric-card ds-metric-card--clickable" onClick={() => setActiveSection("payroll")}>
+                      <div className="ds-metric-card__top">
+                        <div className="ds-metric-card__icon"><Calendar size={16} strokeWidth={1.5} /></div>
+                        <span className="ds-metric-card__tag">Day {day}/{daysInMonth}</span>
+                      </div>
+                      <div className="ds-metric-card__number ds-metric-card__value--sm">{monthLabel}</div>
+                      <div className="ds-metric-progress-wrap">
+                        <div className="ds-metric-progress-bar" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="ds-metric-card__label">Current pay period</div>
+                      <Calendar className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(74,64,64,0.20)" }} />
+                    </div>
+                  );
+                })()}
               </div>
             );
           }
 
           return (
             <div className="ds-metric-strip">
-              <div className="ds-metric-card ds-metric-card--primary">
+              <div
+                className="ds-metric-card ds-metric-card--primary ds-metric-card--clickable"
+                onClick={() => setActiveSection("employees")}
+              >
                 <div className="ds-metric-card__top">
                   <div className="ds-metric-card__icon"><UsersRound size={16} strokeWidth={1.8} /></div>
                   <span className="ds-metric-card__tag">active</span>
@@ -2795,7 +2957,13 @@ function AdminView() {
                 <div className="ds-metric-card__number">{activeCount}</div>
                 <div className="ds-metric-card__label">Team members</div>
               </div>
-              <div className="ds-metric-card ds-metric-card--jade">
+              <div
+                className="ds-metric-card ds-metric-card--jade ds-metric-card--clickable"
+                onClick={() => {
+                  setActiveSection("time-records");
+                  setOpenOnly(false);
+                }}
+              >
                 <div className="ds-metric-card__top">
                   <div className="ds-metric-card__icon"><Timer size={16} strokeWidth={1.8} /></div>
                   <span className="ds-metric-card__tag">period</span>
@@ -2803,21 +2971,30 @@ function AdminView() {
                 <div className="ds-metric-card__number">{totalHours.toFixed(1)}</div>
                 <div className="ds-metric-card__label">Hours logged</div>
               </div>
-              <div className="ds-metric-card">
+              <div
+                className={`ds-metric-card ds-metric-card--clickable ${proserveAlerts > 0 ? "ds-metric-card--warn" : ""}`}
+                onClick={() => setActiveSection("employees")}
+              >
                 <div className="ds-metric-card__top">
-                  <div className="ds-metric-card__icon"><ClipboardList size={16} strokeWidth={1.8} /></div>
-                  <span className="ds-metric-card__tag">total</span>
-                </div>
-                <div className="ds-metric-card__number">{totalRecords}</div>
-                <div className="ds-metric-card__label">Clock records</div>
-              </div>
-              <div className={`ds-metric-card ${proserveAlerts > 0 ? "ds-metric-card--warn" : ""}`}>
-                <div className="ds-metric-card__top">
-                  <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.8} /></div>
+                  <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.5} /></div>
                   <span className="ds-metric-card__tag">{proserveAlerts > 0 ? "alert" : "ok"}</span>
                 </div>
                 <div className="ds-metric-card__number">{proserveAlerts}</div>
                 <div className="ds-metric-card__label">ProServe alerts</div>
+              </div>
+              <div
+                className="ds-metric-card ds-metric-card--clickable"
+                onClick={() => {
+                  setActiveSection("time-records");
+                  setOpenOnly(false);
+                }}
+              >
+                <div className="ds-metric-card__top">
+                  <div className="ds-metric-card__icon"><ClipboardList size={16} strokeWidth={1.5} /></div>
+                  <span className="ds-metric-card__tag">total</span>
+                </div>
+                <div className="ds-metric-card__number">{totalRecords}</div>
+                <div className="ds-metric-card__label">Clock records</div>
               </div>
             </div>
           );
@@ -2836,7 +3013,7 @@ function AdminView() {
           <div className="admin-panel">
             {isEmployeeCreateOpen ? (
               <div style={{ marginBottom: "1.5rem" }}>
-              <form onSubmit={handleCreateEmployee} className="admin-form-stack admin-employee-create-drawer mt-6">
+              <form onSubmit={handleCreateEmployee} className="admin-form-stack admin-employee-create-drawer">
                 <label className="admin-field">
                   <span className="admin-field__label">Employee name</span>
                   <input
@@ -2940,7 +3117,7 @@ function AdminView() {
                     <label className="admin-field">
                       <span className="admin-field__label">Monthly salary (auto)</span>
                       <input type="text" readOnly className="admin-input ef-input--readonly"
-                        value={employeeCreateForm.annual_salary ? `$${(Number(employeeCreateForm.annual_salary) / 12).toFixed(2)}` : "—"} />
+                        value={employeeCreateForm.annual_salary ? `$${(Number(employeeCreateForm.annual_salary) / 12).toFixed(2)}` : "Ã¢â‚¬â€"} />
                     </label>
                     <label className="admin-field">
                       <span className="admin-field__label">Vacation pay rule</span>
@@ -3018,15 +3195,18 @@ function AdminView() {
                 <input
                   type="text"
                   className="admin-team-search"
-                  placeholder="Search by name…"
+                  placeholder="Search by nameÃ¢â‚¬Â¦"
                   value={employeeSearch}
                   onChange={(e) => setEmployeeSearch(e.target.value)}
                 />
                 <button
-                  className={`admin-button admin-button--compact ${isEmployeeCreateOpen ? "admin-button--primary" : "admin-button--secondary"}`}
-                  onClick={() => setIsEmployeeCreateOpen((c) => !c)}
+                  className="admin-button admin-button--secondary admin-button--compact admin-button--subtle"
+                  onClick={() => {
+                    setIsEmployeeCreateOpen((current) => !current);
+                    setSelectedEmployeeId(null);
+                  }}
                 >
-                  {isEmployeeCreateOpen ? "✕ Cancel" : "+ New employee"}
+                  {isEmployeeCreateOpen ? "Ã¢Å“â€¢ Cancel" : "+ New employee"}
                 </button>
               </div>
             </div>
@@ -3039,7 +3219,8 @@ function AdminView() {
                     <th>Status</th>
                     <th>Rate</th>
                     <th>Pay frequency</th>
-                    <th>Since</th>
+                    <th>Contact</th>
+                    <th>Hire/start</th>
                     <th>ProServe</th>
                     <th></th>
                   </tr>
@@ -3051,19 +3232,24 @@ function AdminView() {
                     const ps = proserveStatus(employee.proserve_expiry);
                     const initial = (employee.name || "?")[0].toUpperCase();
                     const isSalaried = (draft.pay_type || employee.pay_type) === "salaried";
+                    const payFrequency = isSalaried
+                      ? "Monthly salary"
+                      : getPayFrequencyLabel(draft.defaultPayFrequency || employee.default_pay_frequency, payrollConfig);
+                    const primaryDate = employee.hire_date || employee.start_date;
+                    const phone = employee.phone || "";
+                    const email = employee.email || "";
+                    const proserveLabel = getProServeBadgeLabel(ps);
                     return [
                       <tr
                         key={`emp-${employee.id}`}
                         className={`emp-table__row ${isSelected ? "is-selected" : ""}`}
-                        onClick={() => setSelectedEmployeeId(isSelected ? null : employee.id)}
-                        style={{ cursor: "pointer" }}
                       >
                         <td>
                           <div className="emp-table__name-cell">
                             <div className="emp-table__avatar">{initial}</div>
                             <div className="emp-table__name-stack">
                               <span className="emp-table__name">{employee.name}</span>
-                              {employee.email ? <span className="emp-table__email">{employee.email}</span> : null}
+                              <span className="emp-table__email">{isSalaried ? "Salaried employee" : "Hourly employee"}</span>
                             </div>
                           </div>
                         </td>
@@ -3078,15 +3264,19 @@ function AdminView() {
                             : `$${Number(draft.defaultHourlyRate || employee.default_hourly_rate || 0).toFixed(2)}/hr`}
                         </td>
                         <td className="emp-table__data">
-                          {isSalaried ? "Monthly salary" : (draft.defaultPayFrequency || employee.default_pay_frequency || "—")}
+                          {payFrequency || "Use payroll period"}
                         </td>
                         <td className="emp-table__data">
-                          {employee.start_date ? new Date(employee.start_date + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, year: "numeric", month: "short", day: "numeric" }) : "—"}
+                          <div className="emp-contact-stack">
+                            {phone ? <span>{phone}</span> : null}
+                            <span className={email ? "" : "emp-muted-placeholder"}>{email || "No email"}</span>
+                          </div>
+                        </td>
+                        <td className="emp-table__data">
+                          {primaryDate ? new Date(primaryDate + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, year: "numeric", month: "short", day: "numeric" }) : "Ã¢â‚¬â€"}
                         </td>
                         <td>
-                          {ps === "ok" && <span className="emp-ps-badge--ok">OK</span>}
-                          {ps === "expiring" && <span className="emp-ps-badge--warn">Expiring</span>}
-                          {ps === "expired" && <span className="emp-ps-badge--danger">Expired</span>}
+                          <span className={`ps-badge ps-badge--${ps || "none"}`}>{proserveLabel}</span>
                         </td>
                         <td className="emp-table__actions-cell">
                           <button
@@ -3099,7 +3289,7 @@ function AdminView() {
                       </tr>,
                       isSelected ? (
                         <tr key={`detail-${employee.id}`} className="emp-detail-row">
-                          <td colSpan={7} className="emp-detail-cell">
+                          <td colSpan={8} className="emp-detail-cell">
                             <div className="admin-employee-inline-detail">
                             <div className="admin-employee-detail__header">
                               <div>
@@ -3116,75 +3306,20 @@ function AdminView() {
                             </div>
 
                             <div className="admin-employee-fields">
-                              <label className="admin-field">
-                                <span className="admin-field__label">Employee name</span>
-                                <input
-                                  type="text"
-                                  value={draft.name ?? ""}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        name: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-input"
-                                />
-                              </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">New PIN</span>
-                                <input
-                                  type="text"
-                                  value={draft.pin ?? ""}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        pin: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-input"
-                                  placeholder="Leave blank to keep current PIN"
-                                />
-                              </label>
-
-                              <div className="admin-field">
-                                <span className="admin-field__label">Pay type</span>
-                                <div style={{ display: "flex", gap: "0.5rem" }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "hourly" } }))}
-                                    className={`ef-pay-toggle ${(draft.pay_type || "hourly") === "hourly" ? "ef-pay-toggle--active" : ""}`}
-                                  >Hourly</button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "salaried" } }))}
-                                    className={`ef-pay-toggle ${draft.pay_type === "salaried" ? "ef-pay-toggle--active" : ""}`}
-                                  >Salaried</button>
-                                </div>
-                              </div>
-
-                              {(draft.pay_type || "hourly") === "hourly" && (
-                                <>
+                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Payroll Settings Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              <div className="ef-section">
+                                <div className="ef-section__label">Payroll Settings</div>
+                                <div className="ef-section__fields">
                                   <label className="admin-field">
-                                    <span className="admin-field__label">Hourly rate</span>
+                                    <span className="admin-field__label">Employee name</span>
                                     <input
-                                      type="number"
-                                      min="0.01"
-                                      step="0.01"
-                                      value={draft.defaultHourlyRate ?? ""}
+                                      type="text"
+                                      value={draft.name ?? ""}
                                       onChange={(event) =>
                                         setEmployeeSettingsDrafts((current) => ({
                                           ...current,
-                                          [employee.id]: {
-                                            ...current[employee.id],
-                                            defaultHourlyRate: event.target.value,
-                                          },
+                                          [employee.id]: { ...current[employee.id], name: event.target.value },
                                         }))
                                       }
                                       className="admin-input"
@@ -3192,186 +3327,247 @@ function AdminView() {
                                   </label>
 
                                   <label className="admin-field">
-                                    <span className="admin-field__label">Pay frequency</span>
-                                    <select
-                                      value={draft.defaultPayFrequency ?? ""}
+                                    <span className="admin-field__label">New PIN</span>
+                                    <input
+                                      type="text"
+                                      value={draft.pin ?? ""}
                                       onChange={(event) =>
                                         setEmployeeSettingsDrafts((current) => ({
                                           ...current,
-                                          [employee.id]: {
-                                            ...current[employee.id],
-                                            defaultPayFrequency: event.target.value,
-                                          },
+                                          [employee.id]: { ...current[employee.id], pin: event.target.value },
+                                        }))
+                                      }
+                                      className="admin-input"
+                                      placeholder="Leave blank to keep current PIN"
+                                    />
+                                  </label>
+
+                                  <div className="admin-field">
+                                    <span className="admin-field__label">Pay type</span>
+                                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "hourly" } }))}
+                                        className={`ef-pay-toggle ${(draft.pay_type || "hourly") === "hourly" ? "ef-pay-toggle--active" : ""}`}
+                                      >Hourly</button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "salaried" } }))}
+                                        className={`ef-pay-toggle ${draft.pay_type === "salaried" ? "ef-pay-toggle--active" : ""}`}
+                                      >Salaried</button>
+                                    </div>
+                                  </div>
+
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Start date</span>
+                                    <input
+                                      type="date"
+                                      value={draft.startDate ?? ""}
+                                      onChange={(event) =>
+                                        setEmployeeSettingsDrafts((current) => ({
+                                          ...current,
+                                          [employee.id]: { ...current[employee.id], startDate: event.target.value },
+                                        }))
+                                      }
+                                      className="admin-input"
+                                    />
+                                  </label>
+
+                                  {(draft.pay_type || "hourly") === "hourly" && (
+                                    <>
+                                      <label className="admin-field">
+                                        <span className="admin-field__label">Hourly rate</span>
+                                        <input
+                                          type="number"
+                                          min="0.01"
+                                          step="0.01"
+                                          value={draft.defaultHourlyRate ?? ""}
+                                          onChange={(event) =>
+                                            setEmployeeSettingsDrafts((current) => ({
+                                              ...current,
+                                              [employee.id]: { ...current[employee.id], defaultHourlyRate: event.target.value },
+                                            }))
+                                          }
+                                          className="admin-input"
+                                        />
+                                      </label>
+
+                                      <label className="admin-field">
+                                        <span className="admin-field__label">Pay frequency</span>
+                                        <select
+                                          value={draft.defaultPayFrequency ?? ""}
+                                          onChange={(event) =>
+                                            setEmployeeSettingsDrafts((current) => ({
+                                              ...current,
+                                              [employee.id]: { ...current[employee.id], defaultPayFrequency: event.target.value },
+                                            }))
+                                          }
+                                          className="admin-select"
+                                        >
+                                          <option value="">Select pay frequency</option>
+                                          {(payrollConfig?.pay_frequency_options || []).map((option) => (
+                                            <option key={option.code} value={option.code}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                    </>
+                                  )}
+
+                                  {draft.pay_type === "salaried" && (
+                                    <>
+                                      <label className="admin-field">
+                                        <span className="admin-field__label">Annual salary ($)</span>
+                                        <input type="number" min="0" step="1000" className="admin-input"
+                                          value={draft.annual_salary ?? ""}
+                                          onChange={(e) => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], annual_salary: e.target.value } }))} />
+                                      </label>
+                                      <label className="admin-field">
+                                        <span className="admin-field__label">Monthly salary (auto)</span>
+                                        <input type="text" readOnly className="admin-input ef-input--readonly"
+                                          value={draft.annual_salary ? `$${(Number(draft.annual_salary) / 12).toFixed(2)}` : "Ã¢â‚¬â€"} />
+                                      </label>
+                                      <label className="admin-field">
+                                        <span className="admin-field__label">Vacation pay rule</span>
+                                        <input type="text" readOnly className="admin-input ef-input--readonly"
+                                          value={`${getVacationPayPercentForStartDate(draft.startDate)}% by service date`} />
+                                      </label>
+                                    </>
+                                  )}
+
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Vacation pay schedule</span>
+                                    <select
+                                      value={draft.vacationPaySchedule ?? "monthly"}
+                                      onChange={(event) =>
+                                        setEmployeeSettingsDrafts((current) => ({
+                                          ...current,
+                                          [employee.id]: { ...current[employee.id], vacationPaySchedule: event.target.value },
                                         }))
                                       }
                                       className="admin-select"
                                     >
-                                      <option value="">Select pay frequency</option>
-                                      {(payrollConfig?.pay_frequency_options || []).map((option) => (
-                                        <option key={option.code} value={option.code}>
-                                          {option.label}
-                                        </option>
-                                      ))}
+                                      <option value="monthly">Monthly payout</option>
+                                      <option value="accrued">Accrued balance</option>
                                     </select>
                                   </label>
-                                </>
-                              )}
+                                </div>
+                              </div>
 
-                              {draft.pay_type === "salaried" && (
-                                <>
+                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Personal Information Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              <div className="ef-section">
+                                <div className="ef-section__label">Personal Information</div>
+                                <div className="ef-section__fields">
                                   <label className="admin-field">
-                                    <span className="admin-field__label">Annual salary ($)</span>
-                                    <input type="number" min="0" step="1000" className="admin-input"
-                                      value={draft.annual_salary ?? ""}
-                                      onChange={(e) => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], annual_salary: e.target.value } }))} />
+                                    <span className="admin-field__label">Phone</span>
+                                    <input type="tel" className="admin-input" placeholder="+1 (403) 000-0000"
+                                      value={draft.phone ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], phone: e.target.value } }))} />
                                   </label>
+
                                   <label className="admin-field">
-                                    <span className="admin-field__label">Monthly salary (auto)</span>
-                                    <input type="text" readOnly className="admin-input ef-input--readonly"
-                                      value={draft.annual_salary ? `$${(Number(draft.annual_salary) / 12).toFixed(2)}` : "—"} />
+                                    <span className="admin-field__label">Email</span>
+                                    <input type="email" className="admin-input" placeholder="employee@example.com"
+                                      value={draft.email ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], email: e.target.value } }))} />
                                   </label>
+
                                   <label className="admin-field">
-                                    <span className="admin-field__label">Vacation pay rule</span>
-                                    <input type="text" readOnly className="admin-input ef-input--readonly"
-                                      value={`${getVacationPayPercentForStartDate(draft.startDate)}% by service date`} />
+                                    <span className="admin-field__label">SIN</span>
+                                    <input type="text" className="admin-input" placeholder="000 000 000"
+                                      value={draft.sin ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], sin: e.target.value } }))} />
                                   </label>
-                                </>
-                              )}
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Start date</span>
-                                <input
-                                  type="date"
-                                  value={draft.startDate ?? ""}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        startDate: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-input"
-                                />
-                              </label>
+                                  <label className="admin-field ef-full">
+                                    <span className="admin-field__label">Home Address</span>
+                                    <input type="text" className="admin-input" placeholder="123 Main St, Banff, AB T1L 1A1"
+                                      value={draft.home_address ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], home_address: e.target.value } }))} />
+                                  </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Vacation pay schedule</span>
-                                <select
-                                  value={draft.vacationPaySchedule ?? "monthly"}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        vacationPaySchedule: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-select"
-                                >
-                                  <option value="monthly">Monthly payout</option>
-                                  <option value="accrued">Accrued balance</option>
-                                </select>
-                              </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Hire Date</span>
+                                    <input type="date" className="admin-input"
+                                      value={draft.hire_date ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], hire_date: e.target.value } }))} />
+                                  </label>
+                                </div>
+                              </div>
 
-                              <div className="form-section-divider">Personal Information</div>
+                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ ProServe Certification Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              <div className="ef-section">
+                                <div className="ef-section__label">ProServe Certification</div>
+                                <div className="ef-section__fields ef-section__fields--2col">
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">ProServe Number</span>
+                                    <input type="text" className="admin-input" placeholder="PS-000000"
+                                      value={draft.proserve_number ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_number: e.target.value } }))} />
+                                  </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Phone</span>
-                                <input type="tel" className="admin-input" placeholder="+1 (403) 000-0000"
-                                  value={draft.phone ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], phone: e.target.value } }))} />
-                              </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Expiry Date</span>
+                                    <input type="date" className="admin-input"
+                                      value={draft.proserve_expiry ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_expiry: e.target.value } }))} />
+                                  </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Email</span>
-                                <input type="email" className="admin-input" placeholder="employee@example.com"
-                                  value={draft.email ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], email: e.target.value } }))} />
-                              </label>
+                                  {draft.proserve_expiry && (() => {
+                                    const status = proserveStatus(draft.proserve_expiry);
+                                    const styles = {
+                                      expired: { color: "#8A1010", bg: "rgba(180,30,30,0.12)" },
+                                      expiring: { color: "#7A5800", bg: "rgba(255,200,60,0.20)" },
+                                      ok: { color: "#1A6B40", bg: "rgba(30,150,90,0.12)" },
+                                    };
+                                    const s = styles[status] || styles.ok;
+                                    const label = status === "expired" ? "Expired" : status === "expiring" ? "Expiring soon" : "Valid";
+                                    return <div style={{ fontSize: "0.8rem", fontWeight: 600, padding: "0.3rem 0.75rem", borderRadius: 50, background: s.bg, color: s.color, display: "inline-flex", alignItems: "center", alignSelf: "flex-end", gap: 4 }}>{label}</div>;
+                                  })()}
+                                </div>
+                              </div>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">SIN (Social Insurance Number)</span>
-                                <input type="text" className="admin-input" placeholder="000 000 000"
-                                  value={draft.sin ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], sin: e.target.value } }))} />
-                              </label>
+                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Record of Employment Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              <div className="ef-section">
+                                <div className="ef-section__label">Record of Employment (ROE)</div>
+                                <div className="ef-section__fields">
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Last Day Worked</span>
+                                    <input type="date" className="admin-input"
+                                      value={draft.roe_last_day ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_last_day: e.target.value } }))} />
+                                  </label>
 
-                              <label className="admin-field" style={{ gridColumn: "1/-1" }}>
-                                <span className="admin-field__label">Home Address</span>
-                                <input type="text" className="admin-input" placeholder="123 Main St, Banff, AB T1L 1A1"
-                                  value={draft.home_address ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], home_address: e.target.value } }))} />
-                              </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Insurable Hours</span>
+                                    <input type="number" min="0" step="0.5" className="admin-input" placeholder="0"
+                                      value={draft.roe_hours ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_hours: e.target.value } }))} />
+                                  </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Hire Date</span>
-                                <input type="date" className="admin-input"
-                                  value={draft.hire_date ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], hire_date: e.target.value } }))} />
-                              </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Insurable Earnings</span>
+                                    <input type="number" min="0" step="0.01" className="admin-input" placeholder="0.00"
+                                      value={draft.roe_wage ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_wage: e.target.value } }))} />
+                                  </label>
+                                </div>
+                              </div>
 
-                              <div className="form-section-divider">ProServe Certification</div>
+                              {/* Ã¢â€â‚¬Ã¢â€â‚¬ Benefits & Notes Ã¢â€â‚¬Ã¢â€â‚¬ */}
+                              <div className="ef-section">
+                                <div className="ef-section__label">Benefits &amp; Notes</div>
+                                <div className="ef-section__fields" style={{ gridTemplateColumns: "1fr" }}>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Benefits Note</span>
+                                    <textarea className="admin-input admin-textarea" rows={3} placeholder="e.g. Extended health coverage, meal allowance..."
+                                      value={draft.benefits_note ?? ""}
+                                      onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], benefits_note: e.target.value } }))} />
+                                  </label>
+                                </div>
+                              </div>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">ProServe Number</span>
-                                <input type="text" className="admin-input" placeholder="PS-000000"
-                                  value={draft.proserve_number ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_number: e.target.value } }))} />
-                              </label>
-
-                              <label className="admin-field">
-                                <span className="admin-field__label">ProServe Expiry Date</span>
-                                <input type="date" className="admin-input"
-                                  value={draft.proserve_expiry ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_expiry: e.target.value } }))} />
-                              </label>
-
-                              {draft.proserve_expiry && (() => {
-                                const status = proserveStatus(draft.proserve_expiry);
-                                const styles = {
-                                  expired: { color: "#8A1010", bg: "rgba(180,30,30,0.12)" },
-                                  expiring: { color: "#7A5800", bg: "rgba(255,200,60,0.20)" },
-                                  ok: { color: "#1A6B40", bg: "rgba(30,150,90,0.12)" },
-                                };
-                                const s = styles[status] || styles.ok;
-                                const label = status === "expired" ? "Expired" : status === "expiring" ? "Expiring soon" : "Valid";
-                                return <div style={{ fontSize: "0.8rem", fontWeight: 600, padding: "0.3rem 0.75rem", borderRadius: 50, background: s.bg, color: s.color, display: "inline-flex", alignItems: "center", gap: 4 }}>{label}</div>;
-                              })()}
-
-                              <div className="form-section-divider">Record of Employment (ROE)</div>
-
-                              <label className="admin-field">
-                                <span className="admin-field__label">Last Day Worked</span>
-                                <input type="date" className="admin-input"
-                                  value={draft.roe_last_day ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_last_day: e.target.value } }))} />
-                              </label>
-
-                              <label className="admin-field">
-                                <span className="admin-field__label">ROE Insurable Hours</span>
-                                <input type="number" min="0" step="0.5" className="admin-input" placeholder="0"
-                                  value={draft.roe_hours ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_hours: e.target.value } }))} />
-                              </label>
-
-                              <label className="admin-field">
-                                <span className="admin-field__label">ROE Insurable Earnings</span>
-                                <input type="number" min="0" step="0.01" className="admin-input" placeholder="0.00"
-                                  value={draft.roe_wage ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_wage: e.target.value } }))} />
-                              </label>
-
-                              <div className="form-section-divider">Benefits &amp; Notes</div>
-
-                              <label className="admin-field" style={{ gridColumn: "1/-1" }}>
-                                <span className="admin-field__label">Benefits Note</span>
-                                <textarea className="admin-input admin-textarea" rows={3} placeholder="e.g. Extended health coverage, meal allowance..."
-                                  value={draft.benefits_note ?? ""}
-                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], benefits_note: e.target.value } }))} />
-                              </label>
                             </div>
 
                             <div className="admin-employee-detail__actions">
@@ -3413,9 +3609,16 @@ function AdminView() {
                                 Save changes
                               </button>
                               <button
+                                onClick={() => setSelectedEmployeeId(null)}
+                                className="admin-button admin-button--secondary"
+                              >
+                                Close
+                              </button>
+                              <button
                                 onClick={() => handleDeleteEmployee(employee)}
                                 className="admin-button admin-button--danger"
                                 disabled={!employee.can_delete}
+                                style={{ marginLeft: "auto" }}
                               >
                                 Delete permanently
                               </button>
@@ -3434,11 +3637,9 @@ function AdminView() {
 
         {activeSection === "time-records" ? (
           <>
-            <SummaryCards summary={summary} />
-
-            <div className="admin-layout-two-column">
-              <div className="admin-stack">
-                <div className="admin-panel admin-panel--sidebar p-6">
+            <div className="admin-layout-two-column clock-page-layout">
+              <div className="admin-stack clock-page-layout__side">
+                <div className="admin-panel admin-panel--sidebar clock-action-panel p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">
@@ -3459,54 +3660,68 @@ function AdminView() {
                   </div>
 
                   <form onSubmit={handleSubmit} className="admin-form-stack mt-6">
-                    <select
-                      value={formState.employeeId}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, employeeId: event.target.value }))
-                      }
-                      disabled={formMode === "edit"}
-                      className="admin-select"
-                      required
-                    >
-                      <option value="">Select employee</option>
-                      {employees.map((employee) => (
-                        <option key={employee.id} value={employee.id}>
-                          {employee.name}
-                        </option>
-                      ))}
-                    </select>
+                    <label className="admin-field">
+                      <span className="admin-field__label">Employee</span>
+                      <select
+                        value={formState.employeeId}
+                        onChange={(event) =>
+                          setFormState((current) => ({ ...current, employeeId: event.target.value }))
+                        }
+                        disabled={formMode === "edit"}
+                        className="admin-select"
+                        required
+                      >
+                        <option value="">Select employee</option>
+                        {employees.map((employee) => (
+                          <option key={employee.id} value={employee.id}>
+                            {employee.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-                    <select
-                      value={formState.type}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, type: event.target.value }))
-                      }
-                      className="admin-select"
-                      required
-                    >
-                      <option value="check-in">check-in</option>
-                      <option value="check-out">check-out</option>
-                    </select>
+                    <div className="admin-inline-fields clock-record-inline-fields">
+                      <label className="admin-field">
+                        <span className="admin-field__label">Event</span>
+                        <select
+                          value={formState.type}
+                          onChange={(event) =>
+                            setFormState((current) => ({ ...current, type: event.target.value }))
+                          }
+                          className="admin-select"
+                          required
+                        >
+                          <option value="check-in">check-in</option>
+                          <option value="check-out">check-out</option>
+                        </select>
+                      </label>
 
-                    <input
-                      type="datetime-local"
-                      value={formState.recordedAt}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, recordedAt: event.target.value }))
-                      }
-                      className="admin-input"
-                      required
-                    />
+                      <label className="admin-field">
+                        <span className="admin-field__label">Recorded at</span>
+                        <input
+                          type="datetime-local"
+                          value={formState.recordedAt}
+                          onChange={(event) =>
+                            setFormState((current) => ({ ...current, recordedAt: event.target.value }))
+                          }
+                          className="admin-input"
+                          required
+                        />
+                      </label>
+                    </div>
 
-                    <input
-                      type="text"
-                      value={formState.kioskId}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, kioskId: event.target.value }))
-                      }
-                      placeholder="Optional kiosk ID"
-                      className="admin-input"
-                    />
+                    <label className="admin-field">
+                      <span className="admin-field__label">Kiosk ID</span>
+                      <input
+                        type="text"
+                        value={formState.kioskId}
+                        onChange={(event) =>
+                          setFormState((current) => ({ ...current, kioskId: event.target.value }))
+                        }
+                        placeholder="Optional kiosk ID"
+                        className="admin-input"
+                      />
+                    </label>
 
                     <button
                       type="submit"
@@ -3522,7 +3737,7 @@ function AdminView() {
                   </form>
                 </div>
 
-                <div className="admin-panel admin-panel--sidebar p-6">
+                <div className="admin-panel admin-panel--sidebar clock-action-panel p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">
@@ -3697,159 +3912,8 @@ function AdminView() {
                 </div>
               </div>
 
-              <div className="admin-stack">
-                <div className="admin-panel p-6">
-                  <div className="admin-panel__header admin-panel__header--split">
-                    <div>
-                      <h2 className="admin-panel__title text-2xl font-bold">Filters</h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm">
-                        Filter history by employee, period, and record status.
-                      </p>
-                    </div>
-                    <span className="admin-badge admin-badge--success">
-                      {adminConfig?.restoreEnabled ? "Restore enabled" : "Restore unavailable"}
-                    </span>
-                  </div>
-
-                  <div className="admin-filters-grid mt-6">
-                    <select
-                      value={filters.employeeId}
-                      onChange={(event) => {
-                        setPage(1);
-                        setFilters((current) => ({ ...current, employeeId: event.target.value }));
-                      }}
-                      className="admin-select"
-                    >
-                      <option value="">All employees</option>
-                      {employees.map((employee) => (
-                        <option key={employee.id} value={employee.id}>
-                          {employee.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    <input
-                      type="date"
-                      value={filters.start}
-                      onChange={(event) => {
-                        setPage(1);
-                        setFilters((current) => ({ ...current, start: event.target.value }));
-                      }}
-                      className="admin-input"
-                    />
-
-                    <input
-                      type="date"
-                      value={filters.end}
-                      onChange={(event) => {
-                        setPage(1);
-                        setFilters((current) => ({ ...current, end: event.target.value }));
-                      }}
-                      className="admin-input"
-                    />
-
-                    <select
-                      value={filters.recordStatus}
-                      onChange={(event) => {
-                        setPage(1);
-                        setFilters((current) => ({ ...current, recordStatus: event.target.value }));
-                      }}
-                      className="admin-select"
-                    >
-                      <option value="active">Active</option>
-                      <option value="deleted">Deleted</option>
-                      <option value="all">All</option>
-                    </select>
-
-                    <div className="admin-actions-row">
-                      <button
-                        className={`admin-button admin-button--compact ${openOnly ? "admin-button--primary" : "admin-button--secondary"}`}
-                        onClick={() => setOpenOnly(o => !o)}
-                        title="Show only employees with open check-ins (no matching check-out)"
-                      >
-                        {openOnly ? "✓ Open only" : "Open only"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setPage(1);
-                          setPageSize(DEFAULT_PAGE_SIZE);
-                          setFilters({
-                            employeeId: "",
-                            start: "",
-                            end: "",
-                            recordStatus: "active",
-                          });
-                          setOpenOnly(false);
-                        }}
-                        className="admin-button admin-button--secondary"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        onClick={handleExport}
-                        className="admin-button admin-button--success"
-                      >
-                        Export CSV
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="admin-panel p-6">
-                  <div className="admin-panel__header admin-panel__header--split">
-                    <div>
-                      <h2 className="admin-panel__title text-2xl font-bold">Summary by employee</h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm">
-                        {selectedEmployeeSummary
-                          ? `Selected employee: ${selectedEmployeeSummary.employee_name}`
-                          : "Review totals and payroll-ready hours for the selected period."}
-                      </p>
-                    </div>
-                    {isLoading ? <span className="admin-subtle-text">Loading...</span> : null}
-                  </div>
-
-                  <div className="admin-table-wrap mt-6 overflow-x-auto">
-                    <table className="admin-data-table w-full border-collapse text-left">
-                      <thead>
-                        <tr className="admin-data-table__header-row">
-                          <th className="py-3 pr-4">Employee</th>
-                          <th className="py-3 pr-4">Check-ins</th>
-                          <th className="py-3 pr-4">Check-outs</th>
-                          <th className="py-3 pr-4">Records</th>
-                          <th className="py-3 pr-4">Hours</th>
-                          <th className="py-3 pr-4">Completed shifts</th>
-                          <th className="py-3 pr-4">Open shifts</th>
-                          <th className="py-3 pr-4">Payroll-ready</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {summary.employees.length === 0 && !isLoading ? (
-                          <tr>
-                            <td className="py-4 admin-subtle-text" colSpan="8">
-                              No data found for the selected filters.
-                            </td>
-                          </tr>
-                        ) : null}
-                        {summary.employees.map((item) => (
-                          <tr key={item.employee_id}>
-                            <td className="py-4 pr-4 font-medium">{item.employee_name}</td>
-                            <td className="py-4 pr-4">{item.check_ins}</td>
-                            <td className="py-4 pr-4">{item.check_outs}</td>
-                            <td className="py-4 pr-4">{item.total_records}</td>
-                            <td className="py-4 pr-4">{item.total_hours.toFixed(2)} h</td>
-                            <td className="py-4 pr-4">{item.complete_shifts}</td>
-                            <td className="py-4 pr-4">{item.open_shifts}</td>
-                            <td className="py-4 pr-4">{item.payroll_ready_hours.toFixed(2)} h</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="admin-panel p-6">
+              <div className="admin-stack clock-page-layout__main">
+            <div className="admin-panel clock-records-panel p-6">
               <div className="admin-panel__header admin-panel__header--split">
                 <div>
                   <h2 className="admin-panel__title text-2xl font-bold">Time Records</h2>
@@ -3891,6 +3955,31 @@ function AdminView() {
                   >
                     Next
                   </button>
+                </div>
+              </div>
+
+              <div className="admin-filters-grid clock-filter-grid" style={{ marginBottom: "1rem" }}>
+                <select
+                  value={filters.employeeId}
+                  onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, employeeId: event.target.value })); }}
+                  className="admin-select"
+                >
+                  <option value="">All employees</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>{employee.name}</option>
+                  ))}
+                </select>
+                <input type="date" value={filters.start} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, start: event.target.value })); }} className="admin-input" />
+                <input type="date" value={filters.end} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, end: event.target.value })); }} className="admin-input" />
+                <select value={filters.recordStatus} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, recordStatus: event.target.value })); }} className="admin-select">
+                  <option value="active">Active</option>
+                  <option value="deleted">Deleted</option>
+                  <option value="all">All</option>
+                </select>
+                <div className="admin-actions-row">
+                  <button className={`admin-button admin-button--compact ${openOnly ? "admin-button--primary" : "admin-button--secondary"}`} onClick={() => setOpenOnly(o => !o)} title="Show only open check-ins">Open only</button>
+                  <button onClick={() => { setPage(1); setPageSize(DEFAULT_PAGE_SIZE); setFilters({ employeeId: "", start: "", end: "", recordStatus: "active" }); setOpenOnly(false); }} className="admin-button admin-button--secondary">Clear</button>
+                  <button onClick={handleExport} className="admin-button admin-button--success">Export CSV</button>
                 </div>
               </div>
 
@@ -3956,7 +4045,7 @@ function AdminView() {
                           const initial = (record.employee_name || "?")[0].toUpperCase();
                           const timeStr = record.recorded_at
                             ? new Date(record.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
-                            : "—";
+                            : "Ã¢â‚¬â€";
                           const badgeClass = record.entry_type === "check-in" ? "cr-type-badge--in"
                             : record.entry_type === "check-out" ? "cr-type-badge--out"
                             : "cr-type-badge--manual";
@@ -3972,7 +4061,7 @@ function AdminView() {
                                   {record.entry_type === "check-in" ? "In" : record.entry_type === "check-out" ? "Out" : record.entry_mode === "manual" ? "Manual" : record.entry_type}
                                 </span>
                               </td>
-                              <td className="cr-td__muted">{record.entry_mode || "—"}</td>
+                              <td className="cr-td__muted">{record.entry_mode || "Ã¢â‚¬â€"}</td>
                               <td className="cr-td__note">
                                 {record.note || ""}
                                 {record.kiosk_id ? <span style={{ opacity: 0.6 }}> #{record.kiosk_id}</span> : null}
@@ -3997,6 +4086,8 @@ function AdminView() {
                 })()}
               </table>
             </div>
+              </div>
+            </div>
           </>
         ) : null}
         {activeSection === "payroll" ? (
@@ -4013,31 +4104,39 @@ function AdminView() {
                 </p>
 
                 {payrollConfig ? (
-                  <div className="admin-note mt-6">
-                    <div>
-                      Overtime: {payrollConfig.overtime_rule.type} above{" "}
-                      {payrollConfig.overtime_rule.regularHoursPerDay}h per day at{" "}
-                      {payrollConfig.overtime_rule.overtimeMultiplier}x
-                    </div>
-                    {payrollConfig.holiday_pay_enabled ? (
-                      <div className="mt-1">
-                        Holiday pay: {payrollConfig.holiday_pay_rule.description}
+                  <div style={{ marginTop: "1.25rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowPayrollRules(v => !v)}
+                      className="admin-panel__subtitle"
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "0.4rem", textDecoration: "underline", textUnderlineOffset: 3, textDecorationColor: "rgba(138,128,120,0.4)" }}
+                    >
+                      {showPayrollRules ? "Hide payroll rules" : "View payroll rules"}
+                    </button>
+                    {showPayrollRules && (
+                      <div className="admin-note" style={{ marginTop: "0.75rem" }}>
+                        <div>
+                          Overtime: {payrollConfig.overtime_rule.type} above{" "}
+                          {payrollConfig.overtime_rule.regularHoursPerDay}h per day at{" "}
+                          {payrollConfig.overtime_rule.overtimeMultiplier}x
+                        </div>
+                        {payrollConfig.holiday_pay_enabled ? (
+                          <div>Holiday pay: {payrollConfig.holiday_pay_rule.description}</div>
+                        ) : null}
+                        {payrollConfig.vacation_pay_enabled ? (
+                          <div>Vacation pay: {payrollConfig.vacation_pay_rule.description}</div>
+                        ) : null}
+                        {payrollConfig.payroll_jurisdiction ? (
+                          <div>
+                            Jurisdiction: {payrollConfig.payroll_jurisdiction.country}/
+                            {payrollConfig.payroll_jurisdiction.province}{" "}
+                            {payrollConfig.payroll_jurisdiction.tax_year},{" "}
+                            {payrollConfig.payroll_jurisdiction.pay_frequency} (
+                            {payrollConfig.payroll_jurisdiction.pay_periods_per_year} periods/year)
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {payrollConfig.vacation_pay_enabled ? (
-                      <div className="mt-1">
-                        Vacation pay: {payrollConfig.vacation_pay_rule.description}
-                      </div>
-                    ) : null}
-                    {payrollConfig.payroll_jurisdiction ? (
-                      <div className="mt-1">
-                        Jurisdiction: {payrollConfig.payroll_jurisdiction.country}/
-                        {payrollConfig.payroll_jurisdiction.province}{" "}
-                        {payrollConfig.payroll_jurisdiction.tax_year},{" "}
-                        {payrollConfig.payroll_jurisdiction.pay_frequency} (
-                        {payrollConfig.payroll_jurisdiction.pay_periods_per_year} periods/year)
-                      </div>
-                    ) : null}
+                    )}
                   </div>
                 ) : null}
 
@@ -4171,10 +4270,10 @@ function AdminView() {
                         <div className="admin-payroll-period-card__top">
                           <div>
                             <div className="admin-payroll-period-card__period">
-                              {payroll.start_date} to {payroll.end_date}
+                              {new Date(payroll.start_date + "T12:00:00").toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
                             </div>
                             <div className="admin-payroll-period-card__meta">
-                              {getPayFrequencyLabel(payroll.pay_frequency, payrollConfig)}
+                              {payroll.start_date} to {payroll.end_date} &middot; {getPayFrequencyLabel(payroll.pay_frequency, payrollConfig)}
                             </div>
                           </div>
                           <span className={`admin-badge ${payroll.status === "approved" ? "admin-badge--success" : "admin-badge--neutral"}`}>
@@ -4191,8 +4290,8 @@ function AdminView() {
                   </div>
                 </div>
 
-                <div className="admin-panel p-6">
-                  <div className="admin-panel__header admin-panel__header--split">
+                {selectedPayroll && <div className="admin-panel p-6">
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem" }}>
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">Payroll details</h2>
                       <p className="admin-panel__subtitle mt-1 text-sm">
@@ -4512,50 +4611,36 @@ function AdminView() {
                       Select a payroll period to view the details.
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
           </>
         ) : null}
         {activeSection === "audit-logs" ? (
           <>
-            <div className="admin-panel p-6">
-              <div className="admin-panel__header admin-panel__header--split">
-                <div>
-                  <h2 className="admin-panel__title text-2xl font-bold">Audit logs</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm">
-                    Review administrative activity by entity with filters, pagination, and CSV export.
-                  </p>
-                </div>
-                <div className="admin-note">
-                  Newest events first
-                </div>
+          <div className="admin-panel p-6">
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.25rem" }}>
+              <div>
+                <h2 className="admin-panel__title">Audit logs</h2>
+                <p className="admin-panel__subtitle" style={{ marginTop: "0.2rem" }}>
+                  Review administrative activity by entity with filters, pagination, and CSV export.
+                </p>
               </div>
-
-              <div className="mt-6">
-                <SectionTabs
-                  tabs={auditTabs}
-                  activeTab={activeAuditSection}
-                  onChange={setActiveAuditSection}
-                  columnsClassName="grid-cols-3"
-                />
+              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                {auditTabs.map(tab => (
+                  <button key={tab.id} onClick={() => setActiveAuditSection(tab.id)}
+                    style={{ background: activeAuditSection === tab.id ? "var(--c-red)" : "rgba(74,64,64,0.07)",
+                      color: activeAuditSection === tab.id ? "#fff" : "var(--c-text-muted)",
+                      border: "none", borderRadius: 8, padding: "0.3rem 0.85rem",
+                      fontSize: "0.78rem", fontWeight: 600, cursor: "pointer" }}>
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             </div>
 
             {activeAuditSection === "employee" ? (
-              <div className="admin-panel p-6">
-                <div className="admin-panel__header admin-panel__header--split">
-                  <div>
-                    <h2 className="text-2xl font-bold">Employee audit</h2>
-                    <p className="admin-panel__subtitle mt-1 text-sm">Creation, edits, activation, and deactivation events.</p>
-                  </div>
-                  <button
-                    onClick={() => handleExportAudit("employee")}
-                    className="admin-button admin-button--secondary"
-                  >
-                    Export CSV
-                  </button>
-                </div>
+              <div>
 
                 <div className="admin-filters-grid admin-filters-grid--four mb-5">
                   <select
@@ -4637,7 +4722,7 @@ function AdminView() {
                           <td className="py-4 pr-4 font-medium">
                             {employeeNamesById[log.entity_id] || `#${log.entity_id}`}
                           </td>
-                          <td className="py-4 pr-4">{log.action}</td>
+                          <td className="py-4 pr-4"><AuditActionBadge action={log.action} /></td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
                           <td className="py-4 pr-4 text-xs admin-subtle-text">
                             <AuditDiff changedFields={log.changed_fields} />
@@ -4665,21 +4750,7 @@ function AdminView() {
             ) : null}
 
             {activeAuditSection === "time_record" ? (
-              <div className="admin-panel p-6">
-                <div className="admin-panel__header admin-panel__header--split">
-                  <div>
-                    <h2 className="text-2xl font-bold">Time record audit</h2>
-                    <p className="admin-panel__subtitle mt-1 text-sm">
-                      Manual creation, editing, deletion, and restoration events.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleExportAudit("time_record")}
-                    className="admin-button admin-button--secondary"
-                  >
-                    Export CSV
-                  </button>
-                </div>
+              <div>
 
                 <div className="admin-filters-grid mb-5">
                   <select
@@ -4759,7 +4830,7 @@ function AdminView() {
                     <thead>
                       <tr className="admin-data-table__header-row">
                         <th className="py-3 pr-4">When</th>
-                        <th className="py-3 pr-4">Record</th>
+                        <th className="py-3 pr-4">Rec.</th>
                         <th className="py-3 pr-4">Employee</th>
                         <th className="py-3 pr-4">Action</th>
                         <th className="py-3 pr-4">Admin</th>
@@ -4783,7 +4854,7 @@ function AdminView() {
                               ? employeeNamesById[log.employee_id] || `#${log.employee_id}`
                               : "-"}
                           </td>
-                          <td className="py-4 pr-4">{log.action}</td>
+                          <td className="py-4 pr-4"><AuditActionBadge action={log.action} /></td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
                           <td className="py-4 pr-4 text-xs admin-subtle-text">
                             <AuditDiff changedFields={log.changed_fields} />
@@ -4811,21 +4882,7 @@ function AdminView() {
             ) : null}
 
             {activeAuditSection === "payroll" ? (
-              <div className="admin-panel p-6">
-                <div className="admin-panel__header admin-panel__header--split">
-                  <div>
-                    <h2 className="text-2xl font-bold">Payroll audit</h2>
-                    <p className="admin-panel__subtitle mt-1 text-sm">
-                      Generation, approval, and payroll adjustments.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleExportAudit("payroll")}
-                    className="admin-button admin-button--secondary"
-                  >
-                    Export CSV
-                  </button>
-                </div>
+              <div>
 
                 <div className="admin-filters-grid mb-5">
                   <select
@@ -4929,7 +4986,7 @@ function AdminView() {
                               ? employeeNamesById[log.employee_id] || `#${log.employee_id}`
                               : "-"}
                           </td>
-                          <td className="py-4 pr-4">{log.action}</td>
+                          <td className="py-4 pr-4"><AuditActionBadge action={log.action} /></td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
                           <td className="py-4 pr-4 text-xs admin-subtle-text">
                             <AuditDiff changedFields={log.changed_fields} />
@@ -4955,6 +5012,7 @@ function AdminView() {
                 />
               </div>
             ) : null}
+          </div>
           </>
         ) : null}
         {activeSection === "payroll-review" ? (

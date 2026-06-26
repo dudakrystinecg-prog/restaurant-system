@@ -519,6 +519,17 @@ function listAdminEmployees() {
         pay_type,
         annual_salary,
         vacation_pay_pct,
+        phone,
+        email,
+        sin,
+        home_address,
+        hire_date,
+        proserve_number,
+        proserve_expiry,
+        roe_last_day,
+        roe_hours,
+        roe_wage,
+        benefits_note,
         (
           SELECT COUNT(*)
           FROM time_records tr
@@ -2371,8 +2382,8 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
       wage_rate_label: "Monthly Salary",
       wage_rate_value: roundMoney(item.salary_base),
       pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
-      payment_reference: item.cheque_number || null,
-      cheque_no: item.cheque_number || null,
+      payment_reference: item.payment_reference || item.cheque_number || null,
+      cheque_no: item.payment_reference || item.cheque_number || null,
       total_hours: 0,
     };
     earnings = {
@@ -2394,8 +2405,8 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
       wage_rate_label: item.wage_rate_label || payroll.wage_rate_label || "Hourly rate",
       wage_rate_value: item.hourly_rate,
       pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
-      payment_reference: item.cheque_number || null,
-      cheque_no: item.cheque_number || null,
+      payment_reference: item.payment_reference || item.cheque_number || null,
+      cheque_no: item.payment_reference || item.cheque_number || null,
       total_hours: Number(item.total_hours || 0),
     };
     earnings = {
