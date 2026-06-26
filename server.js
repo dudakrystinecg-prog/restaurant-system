@@ -49,6 +49,10 @@ const {
   updatePayrollItemHoliday,
   listActiveSalariedEmployees,
   updateSalariedItemBonus,
+  listHolidays,
+  getAlbertaHolidaysForPayroll,
+  saveAlbertaHolidayOverride,
+  clearAlbertaHolidayOverride,
   createAdminUser,
   findAdminUserByEmail,
   findAdminUserById,
@@ -886,6 +890,68 @@ app.get("/api/admin/time-records/config", requireAdminAuth, (_req, res) => {
 
 app.get("/api/admin/payrolls", requireAdminAuth, (_req, res) => {
   res.json(listPayrollPeriods());
+});
+
+app.get("/api/admin/holidays", requireAdminAuth, (_req, res) => {
+  res.json(listHolidays());
+});
+
+// Alberta holiday pay rows for a payroll period
+app.get("/api/admin/payrolls/:id/alberta-holidays", requireAdminAuth, (req, res) => {
+  const rows = getAlbertaHolidaysForPayroll(Number(req.params.id));
+  res.json(rows);
+});
+
+// Save manual override for one employee × holiday
+app.post("/api/admin/payrolls/:id/alberta-holidays/override", requireAdminAuth, (req, res) => {
+  const {
+    payrollItemId,
+    holidayId,
+    isRegularDay,
+    workedOnHoliday,
+    holidayHours,
+    averageDailyWage,
+    holidayPayOption,
+    notes,
+    employeeRate,
+  } = req.body;
+  if (!payrollItemId || !holidayId) {
+    return res.status(400).json({ error: "payrollItemId and holidayId are required." });
+  }
+  const period = getPayrollDetails(Number(req.params.id));
+  if (!period || period.status !== "draft") {
+    return res.status(409).json({ error: "Cannot modify Alberta holiday overrides for an approved payroll." });
+  }
+  const result = saveAlbertaHolidayOverride({
+    payrollPeriodId: Number(req.params.id),
+    payrollItemId: Number(payrollItemId),
+    holidayId: Number(holidayId),
+    overrideIsRegularDay: Boolean(isRegularDay),
+    overrideWorkedOnHoliday: Boolean(workedOnHoliday),
+    overrideHolidayHours: Number(holidayHours || 0),
+    overrideAverageDailyWage: Number(averageDailyWage || 0),
+    overrideHolidayPayOption: holidayPayOption || "premium_pay",
+    overrideNotes: notes || null,
+    employeeRate: Number(employeeRate || 0),
+  });
+  res.json(result);
+});
+
+// Clear manual override — revert to auto
+app.post("/api/admin/payrolls/:id/alberta-holidays/clear-override", requireAdminAuth, (req, res) => {
+  const { payrollItemId, holidayId } = req.body;
+  if (!payrollItemId || !holidayId) {
+    return res.status(400).json({ error: "payrollItemId and holidayId are required." });
+  }
+  const period = getPayrollDetails(Number(req.params.id));
+  if (!period || period.status !== "draft") {
+    return res.status(409).json({ error: "Cannot modify Alberta holiday overrides for an approved payroll." });
+  }
+  const result = clearAlbertaHolidayOverride({
+    payrollItemId: Number(payrollItemId),
+    holidayId: Number(holidayId),
+  });
+  res.json(result);
 });
 
 app.get("/api/admin/payrolls/config", requireAdminAuth, (_req, res) => {

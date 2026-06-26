@@ -112,14 +112,14 @@ body.admin-bg {
 }
 
 .ds-sidebar__logo {
-  width: 64px; height: 64px;
-  border-radius: 12px;
+  width: 176px; height: 176px;
+  border-radius: 16px;
   object-fit: cover;
   box-shadow: 0 4px 16px rgba(0,0,0,0.30);
 }
 
 .ds-sidebar__brand-name {
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
   color: #F0EDE8;
   letter-spacing: 0.01em;
@@ -1351,7 +1351,7 @@ body.admin-bg {
 
 .admin-login-card__logo {
   text-align: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .admin-login-card__logo img {

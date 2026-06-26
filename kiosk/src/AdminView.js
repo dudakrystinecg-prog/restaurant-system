@@ -1720,6 +1720,10 @@ function AdminView() {
   const [payrollConfig, setPayrollConfig] = useState(null);
   const [payrollHolidayInputs, setPayrollHolidayInputs] = useState({});
   const [salariedBonusInputs, setSalariedBonusInputs] = useState({});
+  // Alberta holiday pay
+  const [albertaHolidayRows, setAlbertaHolidayRows] = useState([]);
+  const [albertaOverrideDrafts, setAlbertaOverrideDrafts] = useState({});
+  const [albertaExpandedItems, setAlbertaExpandedItems] = useState({});
   const [showClockForm, setShowClockForm] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
@@ -2285,9 +2289,10 @@ function AdminView() {
   };
 
   const handleSelectPayroll = async (payrollId) => {
-    if (selectedPayroll?.id === payrollId) { setSelectedPayroll(null); return; }
+    if (selectedPayroll?.id === payrollId) { setSelectedPayroll(null); setAlbertaHolidayRows([]); return; }
     setError("");
     setSelectedPayslip(null);
+    setAlbertaHolidayRows([]);
     try {
       const response = await adminFetch(`${API_BASE_URL}/admin/payrolls/${payrollId}`);
       const data = await response.json();
@@ -2295,8 +2300,80 @@ function AdminView() {
       setSelectedPayroll(data);
       setExpandedPayrollItemId(null);
       setPayrollHolidayInputs(buildHolidayInputState(data.items || []));
+      // Load Alberta holiday rows for this period
+      const abResp = await adminFetch(`${API_BASE_URL}/admin/payrolls/${payrollId}/alberta-holidays`);
+      if (abResp.ok) {
+        const abData = await abResp.json();
+        setAlbertaHolidayRows(abData || []);
+        // Pre-populate override drafts from existing manual overrides
+        const drafts = {};
+        for (const row of (abData || [])) {
+          if (row.is_manual_override) {
+            drafts[`${row.payroll_item_id}_${row.holiday_id}`] = {
+              isRegularDay: Boolean(row.override_is_regular_day),
+              workedOnHoliday: Boolean(row.override_worked_on_holiday),
+              holidayHours: String(row.override_holiday_hours ?? ""),
+              averageDailyWage: String(row.override_average_daily_wage ?? ""),
+              holidayPayOption: row.override_holiday_pay_option || "premium_pay",
+              notes: row.override_notes || "",
+            };
+          }
+        }
+        setAlbertaOverrideDrafts(drafts);
+      }
     } catch (loadError) {
       setError(loadError.message || "Failed to load payroll.");
+    }
+  };
+
+  const handleAlbertaSaveOverride = async (row, payrollItemHourlyRate) => {
+    const key = `${row.payroll_item_id}_${row.holiday_id}`;
+    const draft = albertaOverrideDrafts[key] || {};
+    try {
+      const resp = await adminFetch(`${API_BASE_URL}/admin/payrolls/${selectedPayroll.id}/alberta-holidays/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          payrollItemId: row.payroll_item_id,
+          holidayId: row.holiday_id,
+          isRegularDay: draft.isRegularDay ?? Boolean(row.resolved_is_regular_day),
+          workedOnHoliday: draft.workedOnHoliday ?? Boolean(row.resolved_worked_on_holiday),
+          holidayHours: Number(draft.holidayHours ?? row.resolved_holiday_hours ?? 0),
+          averageDailyWage: Number(draft.averageDailyWage ?? row.resolved_average_daily_wage ?? 0),
+          holidayPayOption: draft.holidayPayOption || row.resolved_holiday_pay_option || "premium_pay",
+          notes: draft.notes || "",
+          employeeRate: payrollItemHourlyRate,
+        }),
+      });
+      if (!resp.ok) throw new Error("Failed to save override.");
+      const updated = await resp.json();
+      setAlbertaHolidayRows(prev => prev.map(r =>
+        r.payroll_item_id === row.payroll_item_id && r.holiday_id === row.holiday_id ? updated : r
+      ));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleAlbertaClearOverride = async (row) => {
+    try {
+      const resp = await adminFetch(`${API_BASE_URL}/admin/payrolls/${selectedPayroll.id}/alberta-holidays/clear-override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payrollItemId: row.payroll_item_id, holidayId: row.holiday_id }),
+      });
+      if (!resp.ok) throw new Error("Failed to clear override.");
+      const updated = await resp.json();
+      setAlbertaHolidayRows(prev => prev.map(r =>
+        r.payroll_item_id === row.payroll_item_id && r.holiday_id === row.holiday_id ? updated : r
+      ));
+      setAlbertaOverrideDrafts(prev => {
+        const next = { ...prev };
+        delete next[`${row.payroll_item_id}_${row.holiday_id}`];
+        return next;
+      });
+    } catch (e) {
+      setError(e.message);
     }
   };
 
@@ -4101,9 +4178,6 @@ function AdminView() {
         ) : null}
         {activeSection === "payroll" ? (
           <>
-            <div className="admin-banner admin-banner--info rounded-2xl border border-blue-200 bg-blue-50 px-6 py-4 text-blue-800">
-              {payrollHint}
-            </div>
 
             <div className="admin-layout-two-column">
               <div className="admin-panel admin-panel--sidebar p-6">
@@ -4540,6 +4614,144 @@ function AdminView() {
                                             <div><span>Wage rate</span><strong>${Number(item.hourly_rate || 0).toFixed(2)}</strong></div>
                                             <div><span>Net pay</span><strong>${item.net_pay.toFixed(2)}</strong></div>
                                           </div>
+                                          {/* Alberta holiday pay — per-holiday rows for this item */}
+                                          {(() => {
+                                            const itemAlbertaRows = albertaHolidayRows.filter(r => r.payroll_item_id === item.id);
+                                            if (itemAlbertaRows.length === 0) return null;
+                                            return (
+                                              <div style={{ marginTop: "1rem" }}>
+                                                {itemAlbertaRows.map(abRow => {
+                                                  const abKey = `${abRow.payroll_item_id}_${abRow.holiday_id}`;
+                                                  const isExpanded = albertaExpandedItems[abKey];
+                                                  const draft = albertaOverrideDrafts[abKey] || {};
+                                                  const resolvedPay = Number(abRow.resolved_holiday_pay_calculated ?? 0);
+                                                  const legacyPay = Number(item.holiday_pay || 0);
+                                                  const diff = Math.round((resolvedPay - legacyPay) * 100) / 100;
+                                                  return (
+                                                    <div key={abKey} style={{ marginBottom: "0.75rem", padding: "0.85rem 1rem", background: "rgba(46,125,82,0.06)", borderRadius: 10, border: "1px solid rgba(46,125,82,0.18)" }}>
+                                                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                                                        <div>
+                                                          <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-jade)" }}>
+                                                            Alberta Holiday Pay
+                                                          </span>
+                                                          <span style={{ marginLeft: "0.6rem", fontSize: "0.8rem", fontWeight: 600 }}>{abRow.holiday_name}</span>
+                                                          <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--c-text-muted)" }}>{abRow.holiday_date}</span>
+                                                          {abRow.is_manual_override ? (
+                                                            <span style={{ marginLeft: "0.5rem", padding: "0.1rem 0.45rem", borderRadius: 8, fontSize: "0.7rem", fontWeight: 600, background: "rgba(192,112,32,0.12)", color: "var(--c-amber)" }}>Manual</span>
+                                                          ) : (
+                                                            <span style={{ marginLeft: "0.5rem", padding: "0.1rem 0.45rem", borderRadius: 8, fontSize: "0.7rem", fontWeight: 600, background: "rgba(74,64,64,0.08)", color: "var(--c-text-muted)" }}>Auto</span>
+                                                          )}
+                                                        </div>
+                                                        <button onClick={() => setAlbertaExpandedItems(p => ({ ...p, [abKey]: !p[abKey] }))}
+                                                          style={{ fontSize: "0.75rem", background: "none", border: "none", cursor: "pointer", color: "var(--c-text-muted)", padding: "0.2rem 0.5rem" }}>
+                                                          {isExpanded ? "Hide" : "Details / Override"}
+                                                        </button>
+                                                      </div>
+                                                      {/* Summary row */}
+                                                      <div style={{ display: "flex", gap: "1.5rem", fontSize: "0.8rem", flexWrap: "wrap" }}>
+                                                        <span><span style={{ color: "var(--c-text-muted)" }}>Regular day: </span><strong>{abRow.resolved_is_regular_day ? "Yes" : "No"}</strong> <span style={{ color: "var(--c-text-muted)" }}>({abRow.weekday_count ?? "—"}/9)</span></span>
+                                                        <span><span style={{ color: "var(--c-text-muted)" }}>Worked: </span><strong>{abRow.resolved_worked_on_holiday ? "Yes" : "No"}</strong></span>
+                                                        <span><span style={{ color: "var(--c-text-muted)" }}>ADW: </span><strong>${Number(abRow.resolved_average_daily_wage ?? 0).toFixed(2)}</strong></span>
+                                                        <span><span style={{ color: "var(--c-text-muted)" }}>Alberta value: </span><strong style={{ color: "var(--c-jade)" }}>${resolvedPay.toFixed(2)}</strong></span>
+                                                        <span><span style={{ color: "var(--c-text-muted)" }}>Legacy value: </span><strong>${legacyPay.toFixed(2)}</strong></span>
+                                                        {diff !== 0 && <span style={{ color: diff > 0 ? "var(--c-red)" : "var(--c-text-muted)" }}>{diff > 0 ? `+$${diff.toFixed(2)}` : `-$${Math.abs(diff).toFixed(2)}`}</span>}
+                                                      </div>
+                                                      <div style={{ fontSize: "0.72rem", color: "var(--c-text-muted)", marginTop: "0.35rem", fontStyle: "italic" }}>
+                                                        Comparison only — not applied to payroll totals yet.
+                                                      </div>
+                                                      {isExpanded && (
+                                                        <div style={{ marginTop: "0.85rem", borderTop: "1px solid rgba(46,125,82,0.15)", paddingTop: "0.85rem" }}>
+                                                          {/* Auto detail */}
+                                                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.25rem 1rem", fontSize: "0.78rem", marginBottom: "0.85rem" }}>
+                                                            <span style={{ color: "var(--c-text-muted)" }}>Auto: Regular day</span><span>{abRow.is_regular_day ? "Yes" : "No"} ({abRow.weekday_count ?? "—"}/9)</span>
+                                                            <span style={{ color: "var(--c-text-muted)" }}>Auto: Worked holiday</span><span>{abRow.worked_on_holiday ? "Yes" : "No"} ({Number(abRow.holiday_hours_worked ?? 0).toFixed(2)} h)</span>
+                                                            <span style={{ color: "var(--c-text-muted)" }}>Auto: ADW</span><span>${Number(abRow.average_daily_wage ?? 0).toFixed(2)} ({abRow.adw_period_start} → {abRow.adw_period_end}, {abRow.adw_days_worked ?? 0} days)</span>
+                                                            <span style={{ color: "var(--c-text-muted)" }}>Auto: Alberta pay</span><span>${Number(abRow.holiday_pay_calculated ?? 0).toFixed(2)}</span>
+                                                          </div>
+                                                          {/* Manual override form */}
+                                                          {selectedPayroll.status === "draft" && (
+                                                            <div style={{ background: "rgba(192,112,32,0.06)", borderRadius: 8, padding: "0.75rem", border: "1px solid rgba(192,112,32,0.18)" }}>
+                                                              <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--c-amber)", marginBottom: "0.6rem" }}>
+                                                                Manual Override {abRow.is_manual_override ? "(active)" : ""}
+                                                              </div>
+                                                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.8rem", marginBottom: "0.6rem" }}>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Regular day of work</span>
+                                                                  <select className="admin-select admin-select--compact"
+                                                                    value={draft.isRegularDay !== undefined ? String(draft.isRegularDay) : String(Boolean(abRow.resolved_is_regular_day))}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], isRegularDay: e.target.value === "true" } }))}>
+                                                                    <option value="true">Yes</option>
+                                                                    <option value="false">No</option>
+                                                                  </select>
+                                                                </label>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Worked on holiday</span>
+                                                                  <select className="admin-select admin-select--compact"
+                                                                    value={draft.workedOnHoliday !== undefined ? String(draft.workedOnHoliday) : String(Boolean(abRow.resolved_worked_on_holiday))}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], workedOnHoliday: e.target.value === "true" } }))}>
+                                                                    <option value="false">No</option>
+                                                                    <option value="true">Yes</option>
+                                                                  </select>
+                                                                </label>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Holiday hours worked</span>
+                                                                  <input type="number" min="0" step="0.25" className="admin-input admin-input--compact"
+                                                                    placeholder={String(abRow.resolved_holiday_hours ?? 0)}
+                                                                    value={draft.holidayHours ?? ""}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], holidayHours: e.target.value } }))} />
+                                                                </label>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Average Daily Wage ($)</span>
+                                                                  <input type="number" min="0" step="0.01" className="admin-input admin-input--compact"
+                                                                    placeholder={String(abRow.resolved_average_daily_wage ?? 0)}
+                                                                    value={draft.averageDailyWage ?? ""}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], averageDailyWage: e.target.value } }))} />
+                                                                </label>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Pay option</span>
+                                                                  <select className="admin-select admin-select--compact"
+                                                                    value={draft.holidayPayOption || abRow.resolved_holiday_pay_option || "premium_pay"}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], holidayPayOption: e.target.value } }))}>
+                                                                    <option value="premium_pay">Premium pay (ADW + 1.5×)</option>
+                                                                    <option value="future_day_off">Future paid day off</option>
+                                                                  </select>
+                                                                </label>
+                                                                <label style={{ display: "flex", flexDirection: "column", gap: "0.2rem", gridColumn: "1 / -1" }}>
+                                                                  <span style={{ color: "var(--c-text-muted)", fontSize: "0.72rem" }}>Notes</span>
+                                                                  <input type="text" className="admin-input admin-input--compact"
+                                                                    placeholder="e.g. Monthly hours entered — 5 of 9 not applicable"
+                                                                    value={draft.notes ?? (abRow.override_notes || "")}
+                                                                    onChange={e => setAlbertaOverrideDrafts(p => ({ ...p, [abKey]: { ...p[abKey], notes: e.target.value } }))} />
+                                                                </label>
+                                                              </div>
+                                                              <div style={{ display: "flex", gap: "0.5rem" }}>
+                                                                <button className="admin-button admin-button--primary admin-button--compact"
+                                                                  onClick={() => handleAlbertaSaveOverride(abRow, item.hourly_rate)}>
+                                                                  Save override
+                                                                </button>
+                                                                {abRow.is_manual_override ? (
+                                                                  <button className="admin-button admin-button--secondary admin-button--compact"
+                                                                    onClick={() => handleAlbertaClearOverride(abRow)}>
+                                                                    Revert to auto
+                                                                  </button>
+                                                                ) : null}
+                                                              </div>
+                                                            </div>
+                                                          )}
+                                                          {selectedPayroll.status !== "draft" && abRow.is_manual_override && (
+                                                            <div className="admin-note" style={{ marginTop: "0.5rem" }}>
+                                                              Override notes: {abRow.override_notes || "—"}
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            );
+                                          })()}
+
                                           <div className="admin-payroll-detail-actions">
                                             {selectedPayroll.status === "draft" ? (
                                               <div className="admin-payroll-holiday-editor">

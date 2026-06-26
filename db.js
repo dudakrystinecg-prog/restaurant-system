@@ -80,6 +80,424 @@ function calculateEmployerContributions({ cppEmployee, eiEmployee }) {
   };
 }
 
+// ─── Alberta General Holiday Pay helpers (Phase 2) ───────────────────────────
+
+/**
+ * 5 of 9 rule: count how many of the 9 prior same-weekday dates the employee worked.
+ * "Worked" = has at least one non-deleted time record on that calendar date.
+ */
+function isRegularDayOfWork(employeeId, holidayDate) {
+  const refDate = new Date(holidayDate + "T12:00:00");
+  const weekday = refDate.getDay(); // 0=Sun … 6=Sat
+
+  // Build the 9 previous occurrences of the same weekday
+  const checkedDates = [];
+  let cursor = new Date(refDate);
+  cursor.setDate(cursor.getDate() - 7);
+  while (checkedDates.length < 9) {
+    if (cursor.getDay() === weekday) {
+      checkedDates.push(cursor.toISOString().slice(0, 10));
+    }
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  // Count dates where employee has at least one non-deleted time record
+  const stmt = db.prepare(`
+    SELECT COUNT(DISTINCT date(recorded_at)) AS worked_days
+    FROM time_records
+    WHERE employee_id = ?
+      AND deleted_at IS NULL
+      AND date(recorded_at) IN (${checkedDates.map(() => "?").join(",")})
+  `);
+  const row = stmt.get(employeeId, ...checkedDates);
+  const sameWeekdayWorkedCount = Number(row?.worked_days || 0);
+
+  return {
+    isRegularDay: sameWeekdayWorkedCount >= 5,
+    sameWeekdayWorkedCount,
+    checkedDates,
+  };
+}
+
+/**
+ * Average Daily Wage from the 4 weeks immediately before the holiday.
+ * ADW = sum of regular eligible wages ÷ number of distinct days worked.
+ * Overtime premium is excluded (only base rate × regular hours).
+ */
+function calculateAverageDailyWage(employeeId, holidayDate) {
+  const endRef = new Date(holidayDate + "T00:00:00");
+  endRef.setDate(endRef.getDate() - 1);
+  const periodEnd = endRef.toISOString().slice(0, 10);
+
+  const startRef = new Date(endRef);
+  startRef.setDate(startRef.getDate() - 27); // 4 weeks = 28 days
+  const periodStart = startRef.toISOString().slice(0, 10);
+
+  // Get worked hours and rate from time records in the window.
+  // We use worked_hours on records whose manual_category is 'regular' or entry_mode='clock'.
+  // Holiday records are excluded so their premium does not inflate ADW.
+  const rows = db.prepare(`
+    SELECT
+      date(recorded_at) AS work_date,
+      SUM(worked_hours) AS day_hours
+    FROM time_records
+    WHERE employee_id = ?
+      AND deleted_at IS NULL
+      AND date(recorded_at) BETWEEN ? AND ?
+      AND (manual_category IS NULL OR manual_category = 'regular')
+      AND worked_hours > 0
+    GROUP BY date(recorded_at)
+  `).all(employeeId, periodStart, periodEnd);
+
+  // Fetch the employee's current hourly rate (best available)
+  const emp = db.prepare("SELECT default_hourly_rate FROM employees WHERE id = ?").get(employeeId);
+  const hourlyRate = Number(emp?.default_hourly_rate || 0);
+
+  let totalEligibleWages = 0;
+  let daysWorked = 0;
+
+  for (const row of rows) {
+    // Cap at PAYROLL_OVERTIME_RULE.regularHoursPerDay for ADW (exclude OT premium)
+    const regularHours = Math.min(
+      Number(row.day_hours || 0),
+      PAYROLL_OVERTIME_RULE.regularHoursPerDay
+    );
+    totalEligibleWages += regularHours * hourlyRate;
+    daysWorked += 1;
+  }
+
+  totalEligibleWages = roundMoney(totalEligibleWages);
+  const averageDailyWage = daysWorked > 0
+    ? roundMoney(totalEligibleWages / daysWorked)
+    : 0;
+
+  return { averageDailyWage, totalEligibleWages, daysWorked, periodStart, periodEnd };
+}
+
+/**
+ * Check whether the employee worked on the specific holiday date.
+ * "Worked" = has non-deleted time records on that date with worked_hours > 0.
+ */
+function didEmployeeWorkHoliday(employeeId, holidayDate) {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS record_count,
+      COALESCE(SUM(worked_hours), 0) AS total_hours
+    FROM time_records
+    WHERE employee_id = ?
+      AND deleted_at IS NULL
+      AND date(recorded_at) = ?
+      AND worked_hours > 0
+  `).get(employeeId, holidayDate);
+
+  const holidayHours = Number(row?.total_hours || 0);
+  return {
+    workedOnHoliday: holidayHours > 0,
+    holidayHours,
+  };
+}
+
+/**
+ * Calculate Alberta-compliant holiday pay for the four cases.
+ * Does NOT touch net pay — caller stores result in holiday_pay_calculated only.
+ */
+function calculateAlbertaHolidayPay({
+  isRegularDay,
+  workedOnHoliday,
+  averageDailyWage,
+  holidayHours,
+  hourlyRate,
+  option = "premium_pay",
+}) {
+  const adw = roundMoney(Number(averageDailyWage || 0));
+  const hours = Number(holidayHours || 0);
+  const rate = Number(hourlyRate || 0);
+
+  if (!isRegularDay) {
+    // Not a regular workday
+    if (workedOnHoliday) {
+      // Case d: not regular + worked → 1.5x
+      return roundMoney(hours * rate * 1.5);
+    }
+    // Case e: not regular + did not work → $0
+    return 0;
+  }
+
+  // Is a regular workday
+  if (!workedOnHoliday) {
+    // Case a: regular + did not work → ADW
+    return adw;
+  }
+
+  // Case b/c: regular + worked
+  if (option === "future_day_off") {
+    // Employer chooses future paid day off: pay regular rate now; ADW paid later
+    return roundMoney(hours * rate);
+  }
+  // Default premium_pay: ADW + 1.5x for hours worked
+  return roundMoney(adw + hours * rate * 1.5);
+}
+
+/**
+ * Fetch the Alberta holiday record for a given date, if it exists.
+ */
+function getHolidayForDate(date) {
+  return db.prepare(
+    "SELECT * FROM holidays WHERE date = ? AND is_general_holiday = 1"
+  ).get(date) || null;
+}
+
+/**
+ * List all holidays (for admin UI).
+ */
+function listHolidays() {
+  return db.prepare("SELECT * FROM holidays ORDER BY date ASC").all();
+}
+
+/**
+ * Find all Alberta general holidays whose date falls within [startDate, endDate].
+ */
+function getHolidaysInPeriod(startDate, endDate) {
+  return db.prepare(`
+    SELECT * FROM holidays
+    WHERE province = 'AB' AND is_general_holiday = 1
+      AND date BETWEEN ? AND ?
+    ORDER BY date ASC
+  `).all(startDate, endDate);
+}
+
+/**
+ * Compute the Alberta holiday row for one employee × one holiday.
+ * Returns the full data object ready to insert/update.
+ */
+function computeAlbertaHolidayRow({
+  payrollItemId,
+  payrollPeriodId,
+  employeeId,
+  holiday,
+  employeeRate,
+}) {
+  const regularDayResult = isRegularDayOfWork(employeeId, holiday.date);
+  const adwResult = calculateAverageDailyWage(employeeId, holiday.date);
+  const workedResult = didEmployeeWorkHoliday(employeeId, holiday.date);
+
+  const holidayPayCalculated = calculateAlbertaHolidayPay({
+    isRegularDay: regularDayResult.isRegularDay,
+    workedOnHoliday: workedResult.workedOnHoliday,
+    averageDailyWage: adwResult.averageDailyWage,
+    holidayHours: workedResult.holidayHours,
+    hourlyRate: employeeRate,
+    option: "premium_pay",
+  });
+
+  return {
+    payroll_item_id: payrollItemId,
+    payroll_period_id: payrollPeriodId,
+    employee_id: employeeId,
+    holiday_id: holiday.id,
+    holiday_date: holiday.date,
+    holiday_name: holiday.name,
+    is_regular_day: regularDayResult.isRegularDay ? 1 : 0,
+    weekday_count: regularDayResult.sameWeekdayWorkedCount,
+    checked_dates: JSON.stringify(regularDayResult.checkedDates),
+    average_daily_wage: adwResult.averageDailyWage,
+    adw_period_start: adwResult.periodStart,
+    adw_period_end: adwResult.periodEnd,
+    adw_days_worked: adwResult.daysWorked,
+    adw_total_wages: adwResult.totalEligibleWages,
+    worked_on_holiday: workedResult.workedOnHoliday ? 1 : 0,
+    holiday_hours_worked: workedResult.holidayHours,
+    holiday_pay_calculated: holidayPayCalculated,
+    // Resolved = auto values (no override yet)
+    resolved_is_regular_day: regularDayResult.isRegularDay ? 1 : 0,
+    resolved_worked_on_holiday: workedResult.workedOnHoliday ? 1 : 0,
+    resolved_holiday_hours: workedResult.holidayHours,
+    resolved_average_daily_wage: adwResult.averageDailyWage,
+    resolved_holiday_pay_calculated: holidayPayCalculated,
+    resolved_holiday_pay_option: "premium_pay",
+  };
+}
+
+/**
+ * Insert or regenerate auto Alberta holiday rows for a payroll item.
+ * Only runs when is_manual_override = 0.
+ */
+function upsertAlbertaHolidayAutoRows({ payrollItemId, payrollPeriodId, employeeId, startDate, endDate, employeeRate }) {
+  const holidays = getHolidaysInPeriod(startDate, endDate);
+  const timestamp = new Date().toISOString();
+
+  const upsert = db.prepare(`
+    INSERT INTO payroll_item_alberta_holidays (
+      payroll_item_id, payroll_period_id, employee_id,
+      holiday_id, holiday_date, holiday_name,
+      is_regular_day, weekday_count, checked_dates,
+      average_daily_wage, adw_period_start, adw_period_end, adw_days_worked, adw_total_wages,
+      worked_on_holiday, holiday_hours_worked, holiday_pay_calculated,
+      resolved_is_regular_day, resolved_worked_on_holiday, resolved_holiday_hours,
+      resolved_average_daily_wage, resolved_holiday_pay_calculated, resolved_holiday_pay_option,
+      is_manual_override, created_at, updated_at
+    ) VALUES (
+      ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?
+    )
+    ON CONFLICT(payroll_item_id, holiday_id) DO UPDATE SET
+      is_regular_day = excluded.is_regular_day,
+      weekday_count = excluded.weekday_count,
+      checked_dates = excluded.checked_dates,
+      average_daily_wage = excluded.average_daily_wage,
+      adw_period_start = excluded.adw_period_start,
+      adw_period_end = excluded.adw_period_end,
+      adw_days_worked = excluded.adw_days_worked,
+      adw_total_wages = excluded.adw_total_wages,
+      worked_on_holiday = excluded.worked_on_holiday,
+      holiday_hours_worked = excluded.holiday_hours_worked,
+      holiday_pay_calculated = excluded.holiday_pay_calculated,
+      resolved_is_regular_day = CASE WHEN is_manual_override = 1 THEN resolved_is_regular_day ELSE excluded.resolved_is_regular_day END,
+      resolved_worked_on_holiday = CASE WHEN is_manual_override = 1 THEN resolved_worked_on_holiday ELSE excluded.resolved_worked_on_holiday END,
+      resolved_holiday_hours = CASE WHEN is_manual_override = 1 THEN resolved_holiday_hours ELSE excluded.resolved_holiday_hours END,
+      resolved_average_daily_wage = CASE WHEN is_manual_override = 1 THEN resolved_average_daily_wage ELSE excluded.resolved_average_daily_wage END,
+      resolved_holiday_pay_calculated = CASE WHEN is_manual_override = 1 THEN resolved_holiday_pay_calculated ELSE excluded.resolved_holiday_pay_calculated END,
+      updated_at = excluded.updated_at
+    WHERE is_manual_override = 0
+  `);
+
+  for (const holiday of holidays) {
+    try {
+      const row = computeAlbertaHolidayRow({ payrollItemId, payrollPeriodId, employeeId, holiday, employeeRate });
+      upsert.run(
+        row.payroll_item_id, row.payroll_period_id, row.employee_id,
+        row.holiday_id, row.holiday_date, row.holiday_name,
+        row.is_regular_day, row.weekday_count, row.checked_dates,
+        row.average_daily_wage, row.adw_period_start, row.adw_period_end, row.adw_days_worked, row.adw_total_wages,
+        row.worked_on_holiday, row.holiday_hours_worked, row.holiday_pay_calculated,
+        row.resolved_is_regular_day, row.resolved_worked_on_holiday, row.resolved_holiday_hours,
+        row.resolved_average_daily_wage, row.resolved_holiday_pay_calculated, row.resolved_holiday_pay_option,
+        timestamp, timestamp,
+      );
+    } catch (e) {
+      // Log but don't crash payroll generation
+      console.error(`Alberta holiday calc error for employee ${employeeId}, holiday ${holiday.date}:`, e.message);
+    }
+  }
+}
+
+/**
+ * Fetch all Alberta holiday rows for a payroll period (all employees).
+ */
+function getAlbertaHolidaysForPayroll(payrollPeriodId) {
+  return db.prepare(`
+    SELECT h.*, e.name AS employee_name
+    FROM payroll_item_alberta_holidays h
+    LEFT JOIN employees e ON e.id = h.employee_id
+    WHERE h.payroll_period_id = ?
+    ORDER BY h.holiday_date ASC, e.name ASC
+  `).all(payrollPeriodId);
+}
+
+/**
+ * Save a manual override for one employee × holiday row.
+ * Recalculates resolved_holiday_pay_calculated from the override inputs.
+ */
+function saveAlbertaHolidayOverride({
+  payrollPeriodId,
+  payrollItemId,
+  holidayId,
+  overrideIsRegularDay,
+  overrideWorkedOnHoliday,
+  overrideHolidayHours,
+  overrideAverageDailyWage,
+  overrideHolidayPayOption,
+  overrideNotes,
+  employeeRate,
+}) {
+  const row = db.prepare(`
+    SELECT * FROM payroll_item_alberta_holidays
+    WHERE payroll_item_id = ? AND holiday_id = ?
+  `).get(payrollItemId, holidayId);
+
+  if (!row) return null;
+
+  const resolvedPayCalculated = calculateAlbertaHolidayPay({
+    isRegularDay: Boolean(overrideIsRegularDay),
+    workedOnHoliday: Boolean(overrideWorkedOnHoliday),
+    averageDailyWage: Number(overrideAverageDailyWage || 0),
+    holidayHours: Number(overrideHolidayHours || 0),
+    hourlyRate: Number(employeeRate || 0),
+    option: overrideHolidayPayOption || "premium_pay",
+  });
+
+  const timestamp = new Date().toISOString();
+  db.prepare(`
+    UPDATE payroll_item_alberta_holidays SET
+      is_manual_override = 1,
+      override_is_regular_day = ?,
+      override_worked_on_holiday = ?,
+      override_holiday_hours = ?,
+      override_average_daily_wage = ?,
+      override_holiday_pay_option = ?,
+      override_notes = ?,
+      resolved_is_regular_day = ?,
+      resolved_worked_on_holiday = ?,
+      resolved_holiday_hours = ?,
+      resolved_average_daily_wage = ?,
+      resolved_holiday_pay_calculated = ?,
+      resolved_holiday_pay_option = ?,
+      updated_at = ?
+    WHERE payroll_item_id = ? AND holiday_id = ?
+  `).run(
+    overrideIsRegularDay ? 1 : 0,
+    overrideWorkedOnHoliday ? 1 : 0,
+    Number(overrideHolidayHours || 0),
+    Number(overrideAverageDailyWage || 0),
+    overrideHolidayPayOption || "premium_pay",
+    overrideNotes || null,
+    overrideIsRegularDay ? 1 : 0,
+    overrideWorkedOnHoliday ? 1 : 0,
+    Number(overrideHolidayHours || 0),
+    Number(overrideAverageDailyWage || 0),
+    resolvedPayCalculated,
+    overrideHolidayPayOption || "premium_pay",
+    timestamp,
+    payrollItemId,
+    holidayId,
+  );
+
+  return db.prepare(`SELECT * FROM payroll_item_alberta_holidays WHERE payroll_item_id = ? AND holiday_id = ?`)
+    .get(payrollItemId, holidayId);
+}
+
+/**
+ * Clear manual override — revert to auto for one employee × holiday.
+ */
+function clearAlbertaHolidayOverride({ payrollItemId, holidayId }) {
+  const row = db.prepare(`
+    SELECT * FROM payroll_item_alberta_holidays WHERE payroll_item_id = ? AND holiday_id = ?
+  `).get(payrollItemId, holidayId);
+  if (!row) return null;
+
+  const timestamp = new Date().toISOString();
+  db.prepare(`
+    UPDATE payroll_item_alberta_holidays SET
+      is_manual_override = 0,
+      override_is_regular_day = NULL,
+      override_worked_on_holiday = NULL,
+      override_holiday_hours = NULL,
+      override_average_daily_wage = NULL,
+      override_notes = NULL,
+      resolved_is_regular_day = is_regular_day,
+      resolved_worked_on_holiday = worked_on_holiday,
+      resolved_holiday_hours = holiday_hours_worked,
+      resolved_average_daily_wage = average_daily_wage,
+      resolved_holiday_pay_calculated = holiday_pay_calculated,
+      updated_at = ?
+    WHERE payroll_item_id = ? AND holiday_id = ?
+  `).run(timestamp, payrollItemId, holidayId);
+
+  return db.prepare(`SELECT * FROM payroll_item_alberta_holidays WHERE payroll_item_id = ? AND holiday_id = ?`)
+    .get(payrollItemId, holidayId);
+}
+
+// ─── End Alberta helpers ──────────────────────────────────────────────────────
+
 function calculateHolidayPayAmount({ holidayPay, holidayHours, hourlyRate }) {
   if (holidayPay !== undefined && holidayPay !== null && holidayPay !== "") {
     return roundMoney(Number(holidayPay));
@@ -403,6 +821,101 @@ function initializeDatabase() {
   ensureColumnExists("payroll_items", "salary_vacation_pay", "REAL NOT NULL DEFAULT 0");
   ensureColumnExists("payroll_items", "salary_bonus", "REAL NOT NULL DEFAULT 0");
   ensureColumnExists("payroll_items", "vacation_pay_pct", "REAL NOT NULL DEFAULT 4.0");
+
+  // Alberta general holiday pay — additive columns on payroll_items (kept for backward compat)
+  ensureColumnExists("payroll_items", "is_regular_day", "INTEGER");
+  ensureColumnExists("payroll_items", "average_daily_wage", "REAL");
+  ensureColumnExists("payroll_items", "worked_on_holiday", "INTEGER");
+  ensureColumnExists("payroll_items", "holiday_pay_option", "TEXT NOT NULL DEFAULT 'premium_pay'");
+  ensureColumnExists("payroll_items", "holiday_pay_calculated", "REAL");
+  ensureColumnExists("payroll_items", "holiday_regular_weekday_count", "INTEGER");
+  ensureColumnExists("payroll_items", "holiday_adw_period_start", "TEXT");
+  ensureColumnExists("payroll_items", "holiday_adw_period_end", "TEXT");
+  ensureColumnExists("payroll_items", "holiday_debug_notes", "TEXT");
+
+  // Per-employee per-holiday Alberta calculation rows (supports multiple holidays per period)
+  db.prepare(`CREATE TABLE IF NOT EXISTS payroll_item_alberta_holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payroll_item_id INTEGER NOT NULL,
+    payroll_period_id INTEGER NOT NULL,
+    employee_id INTEGER NOT NULL,
+    holiday_id INTEGER NOT NULL,
+    holiday_date TEXT NOT NULL,
+    holiday_name TEXT NOT NULL,
+    -- Auto-calculated values
+    is_regular_day INTEGER,
+    weekday_count INTEGER,
+    checked_dates TEXT,
+    average_daily_wage REAL,
+    adw_period_start TEXT,
+    adw_period_end TEXT,
+    adw_days_worked INTEGER,
+    adw_total_wages REAL,
+    worked_on_holiday INTEGER,
+    holiday_hours_worked REAL NOT NULL DEFAULT 0,
+    holiday_pay_calculated REAL,
+    -- Manual override fields
+    is_manual_override INTEGER NOT NULL DEFAULT 0,
+    override_is_regular_day INTEGER,
+    override_worked_on_holiday INTEGER,
+    override_holiday_hours REAL,
+    override_average_daily_wage REAL,
+    override_holiday_pay_option TEXT NOT NULL DEFAULT 'premium_pay',
+    override_notes TEXT,
+    -- Final resolved value (auto or manual)
+    resolved_is_regular_day INTEGER,
+    resolved_worked_on_holiday INTEGER,
+    resolved_holiday_hours REAL,
+    resolved_average_daily_wage REAL,
+    resolved_holiday_pay_calculated REAL,
+    resolved_holiday_pay_option TEXT NOT NULL DEFAULT 'premium_pay',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (payroll_item_id) REFERENCES payroll_items (id),
+    FOREIGN KEY (holiday_id) REFERENCES holidays (id),
+    UNIQUE (payroll_item_id, holiday_id)
+  )`).run();
+
+  // Alberta holidays registry table (Phase 5)
+  db.prepare(`CREATE TABLE IF NOT EXISTS holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    province TEXT NOT NULL DEFAULT 'AB',
+    is_general_holiday INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+
+  // Seed Alberta general holidays if table is empty
+  const holidayCount = db.prepare("SELECT COUNT(*) AS cnt FROM holidays").get().cnt;
+  if (holidayCount === 0) {
+    const insertHoliday = db.prepare(
+      "INSERT OR IGNORE INTO holidays (date, name, province, is_general_holiday) VALUES (?, ?, 'AB', 1)"
+    );
+    const seedHolidays = db.transaction(() => {
+      // 2025
+      insertHoliday.run("2025-01-01", "New Year's Day");
+      insertHoliday.run("2025-02-17", "Alberta Family Day");
+      insertHoliday.run("2025-04-18", "Good Friday");
+      insertHoliday.run("2025-05-19", "Victoria Day");
+      insertHoliday.run("2025-07-01", "Canada Day");
+      insertHoliday.run("2025-09-01", "Labour Day");
+      insertHoliday.run("2025-10-13", "Thanksgiving Day");
+      insertHoliday.run("2025-11-11", "Remembrance Day");
+      insertHoliday.run("2025-12-25", "Christmas Day");
+      // 2026
+      insertHoliday.run("2026-01-01", "New Year's Day");
+      insertHoliday.run("2026-02-16", "Alberta Family Day");
+      insertHoliday.run("2026-04-03", "Good Friday");
+      insertHoliday.run("2026-05-18", "Victoria Day");
+      insertHoliday.run("2026-07-01", "Canada Day");
+      insertHoliday.run("2026-09-07", "Labour Day");
+      insertHoliday.run("2026-10-12", "Thanksgiving Day");
+      insertHoliday.run("2026-11-11", "Remembrance Day");
+      insertHoliday.run("2026-12-25", "Christmas Day");
+    });
+    seedHolidays();
+  }
 
   // Admin users table
   db.prepare(`CREATE TABLE IF NOT EXISTS admin_users (
@@ -2173,7 +2686,16 @@ function getPayrollItems(payrollPeriodId) {
         pi.created_at,
         pi.updated_at,
         e.email AS employee_email,
-        e.benefits_note AS benefits_note
+        e.benefits_note AS benefits_note,
+        pi.is_regular_day,
+        pi.average_daily_wage,
+        pi.worked_on_holiday,
+        pi.holiday_pay_option,
+        pi.holiday_pay_calculated,
+        pi.holiday_regular_weekday_count,
+        pi.holiday_adw_period_start,
+        pi.holiday_adw_period_end,
+        pi.holiday_debug_notes
       FROM payroll_items pi
       LEFT JOIN employees e ON e.id = pi.employee_id
       WHERE pi.payroll_period_id = ?
@@ -2242,6 +2764,21 @@ function getPayrollItems(payrollPeriodId) {
       salary_bonus: Number(item.salary_bonus || 0),
       vacation_pay_pct: Number(item.vacation_pay_pct ?? 4),
       benefits_note: item.benefits_note || null,
+      // Alberta holiday pay fields (comparison only — not applied to net pay)
+      is_regular_day: item.is_regular_day !== null && item.is_regular_day !== undefined
+        ? Boolean(item.is_regular_day) : null,
+      average_daily_wage: item.average_daily_wage !== null && item.average_daily_wage !== undefined
+        ? Number(item.average_daily_wage) : null,
+      worked_on_holiday: item.worked_on_holiday !== null && item.worked_on_holiday !== undefined
+        ? Boolean(item.worked_on_holiday) : null,
+      holiday_pay_option: item.holiday_pay_option || 'premium_pay',
+      holiday_pay_calculated: item.holiday_pay_calculated !== null && item.holiday_pay_calculated !== undefined
+        ? Number(item.holiday_pay_calculated) : null,
+      holiday_regular_weekday_count: item.holiday_regular_weekday_count !== null
+        ? Number(item.holiday_regular_weekday_count) : null,
+      holiday_adw_period_start: item.holiday_adw_period_start || null,
+      holiday_adw_period_end: item.holiday_adw_period_end || null,
+      holiday_debug_notes: item.holiday_debug_notes || null,
     }));
 }
 
@@ -2655,6 +3192,9 @@ function generatePayroll({
         payrollPeriodId,
       );
 
+      db.prepare("DELETE FROM payroll_item_alberta_holidays WHERE payroll_period_id = ?").run(
+        payrollPeriodId,
+      );
       db.prepare("DELETE FROM payroll_items WHERE payroll_period_id = ?").run(
         payrollPeriodId,
       );
@@ -2745,10 +3285,19 @@ function generatePayroll({
         ytd_ei,
         ytd_federal_tax,
         ytd_provincial_tax,
+        is_regular_day,
+        average_daily_wage,
+        worked_on_holiday,
+        holiday_pay_option,
+        holiday_pay_calculated,
+        holiday_regular_weekday_count,
+        holiday_adw_period_start,
+        holiday_adw_period_end,
+        holiday_debug_notes,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     );
 
@@ -2790,6 +3339,24 @@ function generatePayroll({
       const holidayHours = Number(holidayAdjustment.holidayHours || 0);
       const holidayLabel =
         holidayPay > 0 ? holidayAdjustment.holidayLabel || "Holiday Pay" : null;
+
+      // ── Alberta holiday pay — stored in payroll_item_alberta_holidays (comparison only) ──
+      // Runs for ALL holidays in the period — not just when holiday_hours > 0.
+      // Does NOT touch holiday_pay or net_pay.
+      const albertaHolidayData = {
+        is_regular_day: null,
+        average_daily_wage: null,
+        worked_on_holiday: null,
+        holiday_pay_calculated: null,
+        holiday_regular_weekday_count: null,
+        holiday_adw_period_start: null,
+        holiday_adw_period_end: null,
+        holiday_debug_notes: null,
+      };
+      // Note: the detailed per-holiday rows are inserted AFTER insertItem.run()
+      // so we have the payrollItemId. See the deferred block below.
+      // ── End Alberta holiday pay header ──────────────────────────────────────
+
       const vacation = calculateVacationPayForEmployee({
         startDate: employeeSettings?.start_date,
         payrollEndDate: endDate,
@@ -2866,9 +3433,31 @@ function generatePayroll({
         deductions.ytd_ei,
         deductions.ytd_federal_tax,
         deductions.ytd_provincial_tax,
+        albertaHolidayData.is_regular_day,
+        albertaHolidayData.average_daily_wage,
+        albertaHolidayData.worked_on_holiday,
+        "premium_pay",
+        albertaHolidayData.holiday_pay_calculated,
+        albertaHolidayData.holiday_regular_weekday_count,
+        albertaHolidayData.holiday_adw_period_start,
+        albertaHolidayData.holiday_adw_period_end,
+        albertaHolidayData.holiday_debug_notes,
         timestamp,
         timestamp,
       );
+
+      // ── Alberta: insert per-holiday rows for every holiday in the period ──
+      // Runs unconditionally so case "regular day + did not work" is captured.
+      const newPayrollItemId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+      upsertAlbertaHolidayAutoRows({
+        payrollItemId: newPayrollItemId,
+        payrollPeriodId,
+        employeeId: employee.employee_id,
+        startDate,
+        endDate,
+        employeeRate,
+      });
+      // ── End Alberta per-holiday rows ─────────────────────────────────────
     });
 
     // NEW: salaried employees — additive, no changes to hourly logic above
@@ -3655,6 +4244,17 @@ module.exports = {
   updatePayrollItemHoliday,
   listActiveSalariedEmployees,
   updateSalariedItemBonus,
+  // Alberta holiday pay helpers
+  isRegularDayOfWork,
+  calculateAverageDailyWage,
+  didEmployeeWorkHoliday,
+  calculateAlbertaHolidayPay,
+  getHolidayForDate,
+  getHolidaysInPeriod,
+  listHolidays,
+  getAlbertaHolidaysForPayroll,
+  saveAlbertaHolidayOverride,
+  clearAlbertaHolidayOverride,
   PAYROLL_OVERTIME_RULE,
   HOLIDAY_PAY_RULE,
   VACATION_PAY_RULE,
