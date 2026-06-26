@@ -273,8 +273,66 @@ function getPayslipDeductionRows(payslip) {
   ];
 }
 
+function summarizeAlbertaHolidayReview(rows = [], items = []) {
+  const itemMap = new Map((items || []).map((item) => [String(item.id), item]));
+  const holidays = new Set();
+  const legacyItemIds = new Set();
+  let manualOverrides = 0;
+  let differenceRows = 0;
+  let totalAlberta = 0;
+  let totalLegacy = 0;
+
+  (rows || []).forEach((row) => {
+    holidays.add(String(row.holiday_id || row.holiday_date || row.holiday_name));
+    if (row.is_manual_override) manualOverrides += 1;
+
+    const item = itemMap.get(String(row.payroll_item_id));
+    const legacyValue = Number(item?.holiday_pay || row.legacy_holiday_pay || 0);
+    const albertaValue = Number(row.resolved_holiday_pay_calculated ?? row.holiday_pay_calculated ?? 0);
+    totalAlberta += albertaValue;
+
+    if (item && !legacyItemIds.has(String(item.id))) {
+      totalLegacy += Number(item.holiday_pay || 0);
+      legacyItemIds.add(String(item.id));
+    } else if (!item) {
+      totalLegacy += legacyValue;
+    }
+
+    if (Math.abs(albertaValue - legacyValue) >= 0.01) {
+      differenceRows += 1;
+    }
+  });
+
+  return {
+    rowCount: rows.length,
+    holidayCount: holidays.size,
+    manualOverrides,
+    differenceRows,
+    totalLegacy,
+    totalAlberta,
+    totalDifference: totalAlberta - totalLegacy,
+  };
+}
+
+function formatSignedMoney(value) {
+  const amount = Number(value || 0);
+  if (Math.abs(amount) < 0.005) return formatMoney(0);
+  return `${amount > 0 ? "+" : "-"}${formatMoney(Math.abs(amount))}`;
+}
+
+function getAlbertaRowsForPayrollItem(rows = [], itemId) {
+  return (rows || []).filter((row) => String(row.payroll_item_id) === String(itemId));
+}
+
+function hasAlbertaHolidayReviewConcern(rows = [], items = []) {
+  const summary = summarizeAlbertaHolidayReview(rows, items);
+  return summary.rowCount > 0 && (summary.differenceRows > 0 || summary.manualOverrides > 0);
+}
+
 function buildPayslipPrintHtml(payslip) {
   const benefitsNote = payslip.benefits_note || "";
+  const albertaRows = Array.isArray(payslip.alberta_holiday_rows) ? payslip.alberta_holiday_rows : [];
+  const legacyHolidayPay = Number(payslip.alberta_legacy_holiday_pay ?? payslip.earnings?.extra_pay ?? 0);
   const earningsRows = getPayslipEarningsRows(payslip)
     .map((row, index) => {
       const benefitCell = index === 0 && benefitsNote ? benefitsNote : "";
@@ -286,6 +344,38 @@ function buildPayslipPrintHtml(payslip) {
       (row) => `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td class="amount">${formatMoney(row.value)}</td><td class="benefits"></td></tr>`,
     )
     .join("");
+  const albertaReviewHtml = albertaRows.length > 0
+    ? `<div class="alberta-review">
+        <div class="alberta-review-head">
+          <h2>General Holiday Pay Review</h2>
+          <span>Comparison only</span>
+        </div>
+        <table class="alberta-review-table">
+          <thead>
+            <tr>
+              <th>Holiday</th>
+              <th>Current payroll holiday value</th>
+              <th>Alberta calculated value</th>
+              <th>Difference</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${albertaRows.map((row) => {
+              const albertaValue = Number(row.resolved_holiday_pay_calculated ?? row.holiday_pay_calculated ?? 0);
+              return `<tr>
+                <td>${row.holiday_name}${row.holiday_date ? ` (${row.holiday_date})` : ""}</td>
+                <td class="amount">${formatMoney(legacyHolidayPay)}</td>
+                <td class="amount">${formatMoney(albertaValue)}</td>
+                <td class="amount">${formatSignedMoney(albertaValue - legacyHolidayPay)}</td>
+                <td>${row.is_manual_override ? "Manual override applied" : "Auto calculation"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+        <div class="note">Comparison only - not included in this payslip total.</div>
+      </div>`
+    : "";
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -311,6 +401,14 @@ function buildPayslipPrintHtml(payslip) {
         .is-total td { font-weight: 700; background: #fafafa; }
         .net-row td { font-weight: 700; font-size: 18px; background: #e5e7eb; }
         .note { margin: 0 22px 22px; padding: 10px 12px; border: 1px solid #9ca3af; font-size: 12px; color: #374151; background: #f9fafb; }
+        .alberta-review { width: calc(100% - 44px); margin: 0 22px 18px; border: 1px solid #9ca3af; background: #fff7f7; }
+        .alberta-review-head { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #d1d5db; }
+        .alberta-review-head h2 { font-size: 15px; margin: 0; }
+        .alberta-review-head span { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #991b1b; }
+        .alberta-review-table { width: 100%; margin: 0; border-collapse: collapse; }
+        .alberta-review-table th, .alberta-review-table td { border: 1px solid #d1d5db; padding: 8px 10px; font-size: 12px; }
+        .alberta-review-table th { background: #fee2e2; text-align: left; }
+        .alberta-review .note { margin: 10px 12px 12px; }
         @media print { body { background: white; padding: 0; } .sheet { border: none; } }
       </style>
     </head>
@@ -350,6 +448,7 @@ function buildPayslipPrintHtml(payslip) {
             <tr class="net-row"><td>Net Pay</td><td class="amount">${formatMoney(payslip.totals.net_pay)}</td><td class="benefits"></td></tr>
           </tbody>
         </table>
+        ${albertaReviewHtml}
         ${payslip.notes.accrued_vacation_balance_note ? `<div class="note">${payslip.notes.accrued_vacation_balance_note}</div>` : ""}
       </div>
       <script>window.onload = () => window.print();</script>
@@ -729,6 +828,121 @@ function SummaryCards({ summary }) {
   );
 }
 
+function AlbertaHolidayReviewPanel({ rows = [], items = [] }) {
+  const summary = summarizeAlbertaHolidayReview(rows, items);
+
+  if (summary.rowCount === 0) {
+    return (
+      <div className="alberta-review-empty">
+        No Alberta general holidays detected in this payroll period.
+      </div>
+    );
+  }
+
+  const metrics = [
+    ["Holidays", summary.holidayCount],
+    ["Employee calculations", summary.rowCount],
+    ["Manual overrides", summary.manualOverrides],
+    ["Different from legacy", summary.differenceRows],
+    ["Legacy holiday pay", formatMoney(summary.totalLegacy)],
+    ["Alberta calculated", formatMoney(summary.totalAlberta)],
+    ["Difference", formatSignedMoney(summary.totalDifference)],
+  ];
+
+  return (
+    <section className="alberta-review-panel">
+      <div className="alberta-review-panel__header">
+        <div>
+          <h3 className="alberta-review-panel__title">General Holiday Pay Review</h3>
+          <p className="alberta-review-panel__subtitle">
+            Review Alberta calculated values beside the current payroll holiday pay.
+          </p>
+        </div>
+        <span className="alberta-review-badge alberta-review-badge--neutral">Comparison only</span>
+      </div>
+      <div className="alberta-review-panel__grid">
+        {metrics.map(([label, value]) => (
+          <div key={label} className="alberta-review-panel__metric">
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="alberta-review-panel__warning">
+        Alberta holiday values are comparison-only and are not included in payroll totals yet.
+      </div>
+    </section>
+  );
+}
+
+function AlbertaPayrollItemBadges({ rows = [], item }) {
+  const itemRows = getAlbertaRowsForPayrollItem(rows, item.id);
+  if (itemRows.length === 0) return null;
+
+  const summary = summarizeAlbertaHolidayReview(itemRows, [item]);
+
+  return (
+    <div className="alberta-review-badges">
+      <span className="alberta-review-badge">Holiday review</span>
+      {Math.abs(summary.totalDifference) >= 0.01 ? (
+        <span className="alberta-review-badge alberta-review-badge--warn">
+          Alberta difference {formatSignedMoney(summary.totalDifference)}
+        </span>
+      ) : null}
+      {summary.manualOverrides > 0 ? (
+        <span className="alberta-review-badge alberta-review-badge--manual">Manual override</span>
+      ) : null}
+      <span className="alberta-review-badge alberta-review-badge--neutral">Comparison only</span>
+    </div>
+  );
+}
+
+function AlbertaPayslipReviewSection({ payslip }) {
+  const rows = Array.isArray(payslip?.alberta_holiday_rows) ? payslip.alberta_holiday_rows : [];
+  if (rows.length === 0) return null;
+
+  const legacyHolidayPay = Number(payslip.alberta_legacy_holiday_pay ?? payslip.earnings?.extra_pay ?? 0);
+
+  return (
+    <section className="alberta-payslip-review">
+      <div className="alberta-payslip-review__header">
+        <h4>General Holiday Pay Review</h4>
+        <span className="alberta-review-badge alberta-review-badge--neutral">
+          Comparison only
+        </span>
+      </div>
+      <div className="alberta-payslip-review__table">
+        <div className="alberta-payslip-review__row alberta-payslip-review__row--head">
+          <span>Holiday</span>
+          <span>Current payroll holiday value</span>
+          <span>Alberta calculated value</span>
+          <span>Difference</span>
+          <span>Status</span>
+        </div>
+        {rows.map((row) => {
+          const albertaValue = Number(row.resolved_holiday_pay_calculated ?? row.holiday_pay_calculated ?? 0);
+          return (
+            <div key={`${row.payroll_item_id}_${row.holiday_id}`} className="alberta-payslip-review__row">
+              <span>{row.holiday_name} {row.holiday_date ? `(${row.holiday_date})` : ""}</span>
+              <span>{formatMoney(legacyHolidayPay)}</span>
+              <span>{formatMoney(albertaValue)}</span>
+              <span>{formatSignedMoney(albertaValue - legacyHolidayPay)}</span>
+              <span>
+                <span className={`alberta-review-badge ${row.is_manual_override ? "alberta-review-badge--manual" : "alberta-review-badge--neutral"}`}>
+                  {row.is_manual_override ? "Manual override applied" : "Auto calculation"}
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="alberta-payslip-review__note">
+        Comparison only - not included in this payslip total.
+      </p>
+    </section>
+  );
+}
+
 function PayslipPreview({ payslip, onPrint, onClose }) {
   if (!payslip) {
     return null;
@@ -817,6 +1031,8 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
           </tr>
         </tbody>
       </table>
+
+      <AlbertaPayslipReviewSection payslip={payslip} />
 
       {payslip.notes.accrued_vacation_balance_note ? (
         <div className="payslip-note">{payslip.notes.accrued_vacation_balance_note}</div>
@@ -1061,6 +1277,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const [sending, setSending] = useState({});
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
+  const [albertaHolidayRows, setAlbertaHolidayRows] = useState([]);
   // confirmModal: null | { mode: "bulk", toSend: [] } | { mode: "single", item: {} }
   const [confirmModal, setConfirmModal] = useState(null);
 
@@ -1093,10 +1310,23 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   }, [approvedPayrolls, selectedPayrollId]);
 
   useEffect(() => {
-    if (!selectedPayrollId) return;
-    adminFetch(`/api/admin/payrolls/${selectedPayrollId}`).then(r => r.json()).then(data => {
+    if (!selectedPayrollId) {
+      setItems([]);
+      setAlbertaHolidayRows([]);
+      return;
+    }
+
+    let isCurrent = true;
+    Promise.all([
+      adminFetch(`/api/admin/payrolls/${selectedPayrollId}`).then(r => r.json()),
+      adminFetch(`/api/admin/payrolls/${selectedPayrollId}/alberta-holidays`)
+        .then(r => (r.ok ? r.json() : []))
+        .catch(() => []),
+    ]).then(([data, holidayRows]) => {
+      if (!isCurrent) return;
       const payrollItems = data.items || data.payroll?.items || [];
       setItems(payrollItems);
+      setAlbertaHolidayRows(Array.isArray(holidayRows) ? holidayRows : []);
       const initialCheques = {};
       const initialConfirmed = {};
       payrollItems.forEach(item => {
@@ -1113,6 +1343,8 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
       setConfirmedCheques(initialConfirmed);
       setSelectedItems(initialSelected);
     });
+
+    return () => { isCurrent = false; };
   }, [selectedPayrollId, adminFetch]);
 
   const handleSaveAll = async () => {
@@ -1124,6 +1356,20 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
           ? "sent"
           : chequeInputs[item.id] ? "ready" : "pending",
       }));
+      const readyItems = items.filter((item) =>
+        itemsToSave.some((saved) =>
+          String(saved.id) === String(item.id) && ["ready", "sent"].includes(saved.send_status),
+        ),
+      );
+      const readyHolidayRows = albertaHolidayRows.filter((row) =>
+        readyItems.some((item) => String(item.id) === String(row.payroll_item_id)),
+      );
+      if (hasAlbertaHolidayReviewConcern(readyHolidayRows, readyItems)) {
+        const confirmed = window.confirm(
+          "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
+        );
+        if (!confirmed) return;
+      }
       const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1173,6 +1419,13 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const handleSaveCheque = async (itemId, chequeVal) => {
     const item = items.find(i => i.id === itemId);
     if (!item) return;
+    const itemHolidayRows = getAlbertaRowsForPayrollItem(albertaHolidayRows, itemId);
+    if (chequeVal && item.send_status !== "sent" && hasAlbertaHolidayReviewConcern(itemHolidayRows, [item])) {
+      const confirmed = window.confirm(
+        "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
+      );
+      if (!confirmed) return;
+    }
     try {
       const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items`, {
         method: "PATCH",
@@ -1228,7 +1481,12 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
       const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items/${itemId}/payslip`);
       if (r.ok) {
         const data = await r.json();
-        setPreviewPayslip(data);
+        const payrollItem = items.find((item) => String(item.id) === String(itemId));
+        setPreviewPayslip({
+          ...data,
+          alberta_holiday_rows: getAlbertaRowsForPayrollItem(albertaHolidayRows, itemId),
+          alberta_legacy_holiday_pay: Number(payrollItem?.holiday_pay || data?.earnings?.extra_pay || 0),
+        });
         setPreviewItemId(itemId);
         previewItemIdRef.current = itemId;
       }
@@ -1257,6 +1515,14 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const sentCount = items.filter(i => i.send_status === "sent").length;
   const selectedCount = Object.values(selectedItems).filter(Boolean).length;
   const allSelected = items.length > 0 && items.every(i => selectedItems[i.id]);
+  const confirmModalRows = confirmModal?.toSend
+    ? albertaHolidayRows.filter((row) =>
+        confirmModal.toSend.some((item) => String(item.id) === String(row.payroll_item_id)),
+      )
+    : [];
+  const confirmModalHasAlbertaWarning = confirmModal?.toSend
+    ? hasAlbertaHolidayReviewConcern(confirmModalRows, confirmModal.toSend)
+    : false;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
@@ -1291,6 +1557,10 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
             )}
           </div>
         </div>
+
+        {items.length > 0 ? (
+          <AlbertaHolidayReviewPanel rows={albertaHolidayRows} items={items} />
+        ) : null}
 
         {items.length > 0 && (
           <div className="emp-table-wrap">
@@ -1345,6 +1615,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                               {item.employee_email || "No email registered"}
                             </span>
                             {rateLabel ? <span className="emp-table__email">{rateLabel}</span> : null}
+                            <AlbertaPayrollItemBadges rows={albertaHolidayRows} item={item} />
                           </div>
                         </div>
                       </td>
@@ -1432,6 +1703,11 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
                 : `${confirmModal.toSend.length} payslips will be emailed:`}
             </p>
             <div className="admin-modal__list">
+              {confirmModalHasAlbertaWarning ? (
+                <div className="admin-modal__list-warn admin-modal__list-warn--block">
+                  General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?
+                </div>
+              ) : null}
               {confirmModal.toSend.map(item => {
                 const cheque = chequeInputs[item.id] || item.payment_reference || "";
                 const missingCheque = !cheque;
@@ -2378,6 +2654,14 @@ function AdminView() {
   };
 
   const handleApprovePayroll = async (payrollId) => {
+    const payrollItems = selectedPayroll?.id === payrollId ? (selectedPayroll.items || []) : [];
+    if (hasAlbertaHolidayReviewConcern(albertaHolidayRows, payrollItems)) {
+      const confirmed = window.confirm(
+        "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
+      );
+      if (!confirmed) return;
+    }
+
     setError("");
     setFeedback("");
     try {
@@ -2540,7 +2824,12 @@ function AdminView() {
         throw new Error(data.error || "Failed to load payslip.");
       }
 
-      setSelectedPayslip(data);
+      const payrollItem = selectedPayroll?.items?.find((item) => String(item.id) === String(itemId));
+      setSelectedPayslip({
+        ...data,
+        alberta_holiday_rows: getAlbertaRowsForPayrollItem(albertaHolidayRows, itemId),
+        alberta_legacy_holiday_pay: Number(payrollItem?.holiday_pay || data?.earnings?.extra_pay || 0),
+      });
     } catch (payslipError) {
       setError(payslipError.message || "Failed to load payslip.");
     } finally {
@@ -4482,6 +4771,11 @@ function AdminView() {
                         </div>
                       </div>
 
+                      <AlbertaHolidayReviewPanel
+                        rows={albertaHolidayRows}
+                        items={selectedPayroll.items || []}
+                      />
+
                       <div className="admin-payroll-card-list">
                         {selectedPayroll.items.map((item) => {
                           const isExpanded = expandedPayrollItemId === item.id;
@@ -4497,6 +4791,7 @@ function AdminView() {
                                       getVacationScheduleLabel(item.vacation_pay_schedule)
                                     )}
                                   </div>
+                                  <AlbertaPayrollItemBadges rows={albertaHolidayRows} item={item} />
                                 </div>
                                 <div className="admin-payroll-item-card__actions">
                                   <button

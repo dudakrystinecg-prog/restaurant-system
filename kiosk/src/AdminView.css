@@ -2406,8 +2406,921 @@ pre {
   margin-top: 0.25rem;
 }
 
+.admin-modal__list-warn--block {
+  background: rgba(215,25,32,0.08);
+  border: 1px solid rgba(215,25,32,0.18);
+  border-radius: 12px;
+  color: var(--c-red);
+  line-height: 1.4;
+  margin: 0 0 0.25rem;
+  padding: 0.75rem 0.9rem;
+}
+
 .admin-modal__actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+}
+
+/* Admin redesign: floating white panel over black/red gradient */
+:root {
+  --c-black: #08080b;
+  --c-red: #d71920;
+  --c-wood: #d71920;
+  --c-ash: #6b6b72;
+  --c-parchment: #ffffff;
+  --c-snow: #ffffff;
+  --c-gradient-sidebar: linear-gradient(180deg, #101014 0%, #09090b 58%, #240407 100%);
+  --c-bg: #08080b;
+  --glass-white: #ffffff;
+  --glass-warm: #ffffff;
+  --glass-dark: rgba(8,8,11,0.92);
+  --glass-blur: blur(0);
+  --glass-shadow: 0 18px 50px rgba(0,0,0,0.10);
+  --glass-shadow-dark: 0 24px 70px rgba(0,0,0,0.35);
+  --glass-shadow-red: 0 16px 38px rgba(215,25,32,0.24);
+  --shadow-card: 0 14px 34px rgba(0,0,0,0.08);
+  --c-text-primary: #101014;
+  --c-text-secondary: #333339;
+  --c-text-muted: #74747b;
+  --c-text-light: #ffffff;
+  --c-border-glass: rgba(8,8,11,0.10);
+  --c-sidebar-bg: #08080b;
+  --c-accent: var(--c-red);
+  --c-accent-soft: rgba(215,25,32,0.10);
+  --c-jade: #101014;
+  --c-jade-soft: rgba(8,8,11,0.08);
+  --c-warn: #d71920;
+  --c-warn-soft: rgba(215,25,32,0.10);
+  --c-border: rgba(8,8,11,0.10);
+  --c-surface: #ffffff;
+  --c-surface-btn: #ffffff;
+  --c-bg-card: #ffffff;
+}
+
+body.admin-bg,
+.ds-shell {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(215,25,32,0.42), transparent 34%),
+    radial-gradient(circle at 84% 8%, rgba(255,255,255,0.10), transparent 24%),
+    linear-gradient(135deg, #050506 0%, #111116 46%, #2a0508 100%);
+}
+
+.admin-blob { filter: blur(70px); }
+.admin-blob-1,
+.admin-blob-4 { background: rgba(215,25,32,0.30); }
+.admin-blob-2,
+.admin-blob-3,
+.admin-blob-5 { background: rgba(255,255,255,0.08); }
+
+.ds-main {
+  margin: 24px 24px 24px 244px;
+  padding: 1.35rem;
+  min-height: calc(100vh - 48px);
+  background: #ffffff;
+  border: 1px solid rgba(255,255,255,0.70);
+  border-radius: 28px;
+  box-shadow: 0 30px 90px rgba(0,0,0,0.34);
+  overflow: hidden;
+}
+
+.ds-sidebar {
+  top: 24px;
+  left: 24px;
+  height: calc(100vh - 48px);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ds-sidebar__logo { box-shadow: 0 14px 30px rgba(0,0,0,0.34); }
+.ds-sidebar__logo {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+.ds-sidebar__brand-name,
+.ds-nav-btn.is-active,
+.ds-nav-item.is-active { color: #ffffff; }
+.ds-sidebar__brand {
+  background: transparent;
+  box-shadow: none;
+}
+.ds-sidebar__brand-sub,
+.ds-sidebar__logout,
+.ds-sidebar__footer-btn--accent { color: rgba(255,255,255,0.72); }
+.ds-nav-btn,
+.ds-nav-item,
+.ds-sidebar__kiosk-link,
+.ds-sidebar__footer-btn { color: rgba(255,255,255,0.58); }
+.ds-nav-btn:hover,
+.ds-nav-item:hover,
+.ds-nav-btn.is-active,
+.ds-nav-item.is-active { background: rgba(255,255,255,0.12); }
+.ds-nav-btn.is-active { box-shadow: inset 3px 0 0 var(--c-red); }
+
+.ds-sidebar__footer {
+  border-top: none;
+}
+
+.ds-welcome-bar {
+  padding: 0.25rem 0.15rem 1rem;
+  border-bottom: 1px solid rgba(8,8,11,0.08);
+}
+
+.ds-welcome-bar__date { color: var(--c-red); }
+
+.ds-live-badge,
+.admin-panel,
+.cr-filter-bar,
+.admin-filter-bar,
+.emp-table,
+.cr-table-wrap,
+.admin-payroll-period-card,
+.admin-payroll-item-card,
+.admin-tabs,
+.admin-hero {
+  background: #ffffff;
+  border: 1px solid rgba(8,8,11,0.10);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.admin-panel,
+.admin-payroll-period-card,
+.admin-payroll-item-card,
+.admin-tabs,
+.admin-hero { border-radius: 20px; }
+
+.ds-metric-card,
+.clock-action-panel,
+.clock-filter-panel,
+.clock-summary-panel,
+.clock-records-panel,
+.admin-employee-create-drawer,
+.ef-section {
+  background: #ffffff;
+  border: 1px solid rgba(8,8,11,0.10);
+  box-shadow: var(--shadow-card);
+}
+
+.ds-metric-card--primary,
+.ds-metric-card--dark {
+  background: linear-gradient(145deg, #111116 0%, #1b1b22 55%, #d71920 160%);
+  border-color: rgba(8,8,11,0.18);
+}
+
+.ds-metric-card--warm,
+.ds-metric-card--jade,
+.ds-metric-card--success,
+.ds-metric-card--warn { background: #ffffff; }
+
+.ds-metric-card__tag,
+.ds-metric-card__tag--warn,
+.ds-metric-card__tag--green,
+.admin-badge,
+.admin-status-badge,
+.emp-status-badge,
+.cr-type-badge,
+.ps-badge {
+  background: rgba(8,8,11,0.06);
+  color: #101014;
+}
+
+.ds-metric-card--primary .ds-metric-card__tag,
+.ds-metric-card--dark .ds-metric-card__tag {
+  background: rgba(255,255,255,0.18);
+  color: #ffffff;
+}
+
+.admin-badge--success,
+.admin-status-badge.is-active,
+.emp-status-badge--active,
+.ps-badge--valid,
+.cr-type-badge--in {
+  background: rgba(8,8,11,0.08);
+  color: #101014;
+}
+
+.admin-badge--warn,
+.admin-badge--danger,
+.ps-badge--expiring,
+.ps-badge--expired,
+.cr-type-badge--out,
+.cr-type-badge--manual,
+.cr-type-badge--salary {
+  background: rgba(215,25,32,0.10);
+  color: var(--c-red);
+}
+
+.ds-metric-card:not(.ds-metric-card--primary):not(.ds-metric-card--dark) .ds-metric-card__icon,
+.admin-button--secondary,
+.admin-button--subtle,
+.admin-input,
+.admin-select,
+.admin-team-search,
+.cr-action-btn,
+.admin-employee-card-btn,
+.cr-emp-chip {
+  background: #ffffff;
+  border: 1px solid rgba(8,8,11,0.10);
+  color: #101014;
+  box-shadow: none;
+}
+
+.admin-input,
+.admin-select,
+.admin-team-search { background: #ffffff; }
+
+.admin-input:focus,
+.admin-select:focus,
+.admin-team-search:focus {
+  border-color: rgba(215,25,32,0.55);
+  box-shadow: 0 0 0 3px rgba(215,25,32,0.10);
+}
+
+.admin-button--primary,
+.admin-tab.is-active {
+  background: linear-gradient(135deg, #d71920, #9d0f15);
+  color: #ffffff;
+  box-shadow: 0 12px 26px rgba(215,25,32,0.24);
+}
+
+.admin-button--success {
+  background: #101014;
+  color: #ffffff;
+}
+
+.admin-button--danger,
+.admin-employee-card-btn--danger,
+.cr-action-btn--danger {
+  background: rgba(215,25,32,0.10);
+  color: var(--c-red);
+}
+
+.ds-metric-progress-wrap { background: rgba(8,8,11,0.10); }
+.ds-metric-progress-bar,
+.ds-metric-live-dot { background: var(--c-red); }
+
+.ef-section__label,
+.cr-day-header-row,
+.cr-day-header-row td,
+.admin-data-table thead th,
+.emp-table thead th,
+.cr-table thead th {
+  background: rgba(8,8,11,0.03);
+  color: var(--c-text-muted);
+  border-color: rgba(8,8,11,0.08);
+}
+
+.emp-table__row:hover,
+.admin-data-table tbody tr:hover,
+.cr-record-row:hover,
+.clock-summary-table .admin-data-table tbody tr:hover {
+  background: rgba(215,25,32,0.035);
+}
+
+.admin-tab:hover {
+  background: rgba(215,25,32,0.08);
+  color: var(--c-red);
+}
+
+.admin-modal-overlay { background: rgba(0,0,0,0.58); }
+.admin-modal {
+  background: #ffffff;
+  border: 1px solid rgba(8,8,11,0.10);
+}
+
+@media (max-width: 820px) {
+  .ds-main {
+    margin: 0;
+    border-radius: 0;
+    min-height: 100vh;
+  }
+
+  .ds-sidebar {
+    top: 0;
+    left: 0;
+    height: auto;
+    border-radius: 0 0 24px 24px;
+  }
+}
+
+/* Admin visual system consistency pass */
+:root {
+  --ds-font: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ds-space-1: 0.25rem;
+  --ds-space-2: 0.5rem;
+  --ds-space-3: 0.75rem;
+  --ds-space-4: 1rem;
+  --ds-space-5: 1.25rem;
+  --ds-space-6: 1.5rem;
+  --ds-radius-sm: 10px;
+  --ds-radius-md: 14px;
+  --ds-radius-lg: 20px;
+  --ds-radius-xl: 28px;
+  --ds-input-h: 42px;
+  --ds-button-h: 40px;
+  --ds-button-h-sm: 34px;
+  --ds-border: rgba(8,8,11,0.10);
+  --ds-border-strong: rgba(8,8,11,0.16);
+  --ds-surface: #ffffff;
+  --ds-surface-soft: #f7f7f8;
+  --ds-surface-muted: #f0f0f2;
+  --ds-text: #101014;
+  --ds-text-soft: #333339;
+  --ds-text-muted: #74747b;
+  --ds-red: #d71920;
+  --ds-red-soft: rgba(215,25,32,0.08);
+  --ds-red-dark: #9d0f15;
+  --ds-shadow-sm: 0 10px 26px rgba(0,0,0,0.06);
+}
+
+body,
+.ds-shell,
+.admin-panel,
+.admin-button,
+.admin-input,
+.admin-select,
+.admin-textarea,
+button,
+input,
+select,
+textarea {
+  font-family: var(--ds-font);
+}
+
+.ds-main {
+  gap: var(--ds-space-4);
+}
+
+.ds-page-body {
+  gap: var(--ds-space-4);
+}
+
+.admin-panel,
+.ds-metric-card,
+.admin-summary-card,
+.admin-metric-card,
+.admin-payslip-preview-area,
+.admin-payroll-period-card,
+.admin-payroll-item-card,
+.admin-payroll-detail-card,
+.admin-employee-create-drawer,
+.ef-section,
+.emp-table-wrap,
+.cr-table-wrap,
+.admin-modal,
+.admin-login-card {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.admin-panel,
+.clock-action-panel,
+.clock-filter-panel,
+.clock-summary-panel,
+.clock-records-panel,
+.admin-payroll-detail-card,
+.admin-payslip-preview-area {
+  padding: var(--ds-space-5);
+}
+
+.admin-panel__title,
+.admin-employee-detail__title,
+.admin-employee-card__title,
+.admin-payroll-item-card__name,
+.admin-modal__title,
+.admin-login-card__title {
+  color: var(--ds-text);
+  font-size: 1.05rem;
+  line-height: 1.25;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.admin-panel__subtitle,
+.admin-payroll-item-card__meta,
+.admin-payroll-period-card__meta,
+.admin-login-card__subtitle,
+.admin-subtle-text,
+.admin-modal__subtitle {
+  color: var(--ds-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  font-weight: 500;
+}
+
+.admin-field,
+.admin-form-stack {
+  gap: var(--ds-space-3);
+}
+
+.admin-field__label,
+.admin-inline-field__label,
+.admin-eyebrow,
+.admin-tab__kicker,
+.admin-data-table thead th,
+.emp-table thead th,
+.cr-table thead th,
+.ef-section__label {
+  color: var(--ds-text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-input,
+.admin-select,
+.admin-textarea,
+.admin-team-search,
+.admin-input--compact,
+.admin-select--compact {
+  min-height: var(--ds-input-h);
+  border-radius: var(--ds-radius-sm);
+  border: 1px solid var(--ds-border);
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  font-size: 0.88rem;
+  line-height: 1.2;
+  padding: 0.58rem 0.78rem;
+}
+
+.admin-input--compact,
+.admin-select--compact {
+  min-height: 36px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+}
+
+.admin-textarea {
+  min-height: 86px;
+  line-height: 1.45;
+}
+
+.admin-input::placeholder,
+.admin-textarea::placeholder {
+  color: rgba(16,16,20,0.42);
+}
+
+.admin-button,
+.ef-pay-toggle,
+.audit-tab-btn,
+.cr-action-btn,
+.admin-employee-card-btn {
+  min-height: var(--ds-button-h);
+  border-radius: var(--ds-radius-sm);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1;
+  gap: var(--ds-space-2);
+  padding: 0 1rem;
+}
+
+.admin-button--compact,
+.cr-action-btn,
+.admin-employee-card-btn,
+.audit-tab-btn {
+  min-height: var(--ds-button-h-sm);
+  padding: 0 0.75rem;
+  font-size: 0.78rem;
+}
+
+.admin-button--secondary,
+.admin-button--subtle,
+.ef-pay-toggle,
+.audit-tab-btn,
+.cr-action-btn,
+.admin-employee-card-btn {
+  border: 1px solid var(--ds-border);
+  background: var(--ds-surface);
+  color: var(--ds-text);
+}
+
+.admin-button--primary,
+.ef-pay-toggle--active,
+.audit-tab-btn.is-active {
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--ds-red), var(--ds-red-dark));
+  color: #ffffff;
+}
+
+.admin-button--success {
+  background: #101014;
+  color: #ffffff;
+}
+
+.admin-button--danger,
+.cr-action-btn--danger,
+.admin-employee-card-btn--danger {
+  border: 1px solid rgba(215,25,32,0.14);
+  background: rgba(215,25,32,0.08);
+  color: var(--ds-red);
+}
+
+.admin-team-toolbar,
+.admin-panel__header--split,
+.admin-actions-row,
+.admin-payroll-period-card__top,
+.admin-payroll-item-card__top {
+  gap: var(--ds-space-3);
+}
+
+.admin-layout-two-column,
+.admin-stack,
+.admin-payroll-period-list,
+.admin-payroll-card-list,
+.admin-payroll-detail-grid,
+.admin-inline-fields,
+.admin-inline-notes {
+  gap: var(--ds-space-4);
+}
+
+.ds-metric-strip,
+.admin-summary-grid,
+.admin-metric-grid {
+  gap: var(--ds-space-3);
+}
+
+.ds-metric-card {
+  min-height: 128px;
+  padding: var(--ds-space-4);
+}
+
+.ds-metric-card__number,
+.admin-summary-card__value {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ds-metric-card__label,
+.admin-summary-card__label,
+.admin-payroll-period-card__stats span,
+.admin-payroll-item-card__summary span {
+  font-size: 0.72rem;
+  color: var(--ds-text-muted);
+  font-weight: 700;
+}
+
+.ds-metric-card--primary,
+.ds-metric-card--dark {
+  background: linear-gradient(145deg, #d71920 0%, #b9141b 58%, #101014 145%);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 16px 34px rgba(215,25,32,0.28);
+}
+
+.ds-metric-card--primary *,
+.ds-metric-card--dark * {
+  color: #ffffff;
+}
+
+.ds-metric-card--primary .ds-metric-card__icon,
+.ds-metric-card--dark .ds-metric-card__icon {
+  background: rgba(255,255,255,0.18);
+  border: none;
+  color: #ffffff;
+}
+
+.ds-metric-card--primary .ds-metric-card__tag,
+.ds-metric-card--dark .ds-metric-card__tag {
+  background: rgba(255,255,255,0.20);
+  color: #ffffff;
+}
+
+.ds-metric-card--primary .ds-metric-card__number,
+.ds-metric-card--dark .ds-metric-card__number,
+.ds-metric-card--primary .ds-metric-card__label,
+.ds-metric-card--dark .ds-metric-card__label {
+  color: #ffffff;
+}
+
+.ds-metric-card__tag,
+.admin-badge,
+.admin-status-badge,
+.emp-status-badge,
+.ps-badge,
+.cr-type-badge {
+  min-height: 24px;
+  padding: 0.2rem 0.65rem;
+  border-radius: 99px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: rgba(8,8,11,0.06);
+  color: var(--ds-text);
+}
+
+.admin-data-table,
+.emp-table,
+.cr-table {
+  font-size: 0.86rem;
+}
+
+.admin-data-table td,
+.emp-table td,
+.emp-table__row td,
+.cr-table td {
+  padding: 0.82rem 1rem;
+  color: var(--ds-text);
+  border-bottom: 1px solid rgba(8,8,11,0.07);
+}
+
+.admin-data-table thead th,
+.emp-table thead th,
+.cr-table thead th {
+  padding: 0.72rem 1rem;
+  background: var(--ds-surface-soft);
+  border-bottom: 1px solid rgba(8,8,11,0.08);
+}
+
+.emp-table tbody tr:last-child td,
+.cr-table tbody tr:last-child td,
+.admin-data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.emp-table__avatar,
+.cr-row__avatar,
+.cr-emp-chip__avatar {
+  background: rgba(215,25,32,0.10);
+  color: var(--ds-red);
+}
+
+.emp-table__row.is-selected .emp-table__avatar {
+  background: var(--ds-red);
+  color: #ffffff;
+}
+
+.cr-emp-chip {
+  min-height: 34px;
+  border-radius: 99px;
+}
+
+.cr-emp-chip.is-active,
+.cr-emp-chip--active {
+  background: linear-gradient(135deg, var(--ds-red), var(--ds-red-dark));
+  color: #ffffff;
+}
+
+.ef-section__label,
+.cr-day-header-row td {
+  background: var(--ds-surface-soft);
+}
+
+.admin-collapsible__toggle,
+.admin-collapsible__content,
+.admin-checkbox-card,
+.admin-note,
+.admin-note--soft {
+  background: var(--ds-surface-soft);
+  border: 1px solid var(--ds-border);
+  color: var(--ds-text-soft);
+}
+
+.admin-collapsible__toggle.is-open {
+  background: rgba(215,25,32,0.06);
+  border-color: rgba(215,25,32,0.22);
+}
+
+.admin-alert,
+.admin-note {
+  border-radius: var(--ds-radius-md);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  padding: 0.85rem 1rem;
+}
+
+.admin-alert--success {
+  background: rgba(8,8,11,0.06);
+  color: var(--ds-text);
+  border: 1px solid rgba(8,8,11,0.10);
+}
+
+.admin-alert--error,
+.admin-note--danger {
+  background: rgba(215,25,32,0.08);
+  color: var(--ds-red);
+  border: 1px solid rgba(215,25,32,0.16);
+}
+
+.admin-login-shell {
+  background:
+    radial-gradient(circle at 20% 16%, rgba(215,25,32,0.42), transparent 34%),
+    linear-gradient(135deg, #050506 0%, #111116 48%, #2a0508 100%);
+}
+
+.admin-login-card {
+  padding: 2rem;
+}
+
+.admin-login-card__logo img {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  box-shadow: none;
+}
+
+.admin-pagination {
+  font-size: 0.82rem;
+  padding: 0.8rem 1rem;
+}
+
+.alberta-review-panel,
+.alberta-review-empty,
+.alberta-payslip-review {
+  background: var(--ds-surface);
+  border: 1px solid rgba(215,25,32,0.16);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-sm);
+}
+
+.alberta-review-panel {
+  margin: 0 0 var(--ds-space-5);
+  padding: var(--ds-space-5);
+}
+
+.alberta-review-empty {
+  color: var(--ds-muted);
+  font-size: 0.86rem;
+  margin: 0 0 var(--ds-space-5);
+  padding: 0.8rem 1rem;
+}
+
+.alberta-review-panel__header,
+.alberta-payslip-review__header {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.alberta-review-panel__title,
+.alberta-payslip-review__header h4 {
+  color: var(--ds-text);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.alberta-review-panel__subtitle {
+  color: var(--ds-muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin: 0.25rem 0 0;
+}
+
+.alberta-review-panel__grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  margin-top: 1rem;
+}
+
+.alberta-review-panel__metric {
+  background: var(--ds-surface-soft);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  padding: 0.75rem 0.85rem;
+}
+
+.alberta-review-panel__metric span {
+  color: var(--ds-muted);
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.alberta-review-panel__metric strong {
+  color: var(--ds-text);
+  display: block;
+  font-size: 1rem;
+  font-weight: 800;
+  margin-top: 0.25rem;
+}
+
+.alberta-review-panel__warning,
+.alberta-payslip-review__note {
+  background: rgba(215,25,32,0.08);
+  border: 1px solid rgba(215,25,32,0.16);
+  border-radius: var(--ds-radius-md);
+  color: var(--ds-red);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 1rem 0 0;
+  padding: 0.75rem 0.9rem;
+}
+
+.alberta-review-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.alberta-review-badge {
+  align-items: center;
+  background: rgba(215,25,32,0.08);
+  border: 1px solid rgba(215,25,32,0.16);
+  border-radius: 999px;
+  color: var(--ds-red);
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  padding: 0.32rem 0.55rem;
+  white-space: nowrap;
+}
+
+.alberta-review-badge--warn,
+.alberta-review-badge--manual {
+  background: var(--ds-red-soft);
+  border-color: rgba(215,25,32,0.22);
+  color: var(--ds-red);
+}
+
+.alberta-review-badge--neutral {
+  background: rgba(8,8,11,0.06);
+  border-color: rgba(8,8,11,0.10);
+  color: var(--ds-muted);
+}
+
+.alberta-payslip-review {
+  margin: 0 22px 18px;
+  padding: 1rem;
+}
+
+.alberta-payslip-review__table {
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  margin-top: 0.85rem;
+  overflow: hidden;
+}
+
+.alberta-payslip-review__row {
+  align-items: center;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1.35fr 1fr 1fr 0.8fr 1fr;
+  padding: 0.7rem 0.8rem;
+}
+
+.alberta-payslip-review__row + .alberta-payslip-review__row {
+  border-top: 1px solid var(--ds-border);
+}
+
+.alberta-payslip-review__row--head {
+  background: var(--ds-surface-soft);
+  color: var(--ds-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.alberta-payslip-review__row:not(.alberta-payslip-review__row--head) {
+  color: var(--ds-text);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1180px) {
+  .ds-main {
+    padding: 1rem;
+  }
+
+  .ds-metric-card {
+    min-height: 118px;
+  }
+}
+
+@media (max-width: 820px) {
+  .admin-panel,
+  .clock-action-panel,
+  .clock-filter-panel,
+  .clock-summary-panel,
+  .clock-records-panel {
+    padding: var(--ds-space-4);
+  }
+
+  .admin-panel__header--split,
+  .admin-actions-row {
+    align-items: flex-start;
+  }
+
+  .alberta-payslip-review__row {
+    grid-template-columns: 1fr;
+  }
 }
