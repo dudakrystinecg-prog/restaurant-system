@@ -1,3 +1,4 @@
+require("dotenv").config();
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -44,6 +45,21 @@ const {
   recalculatePayroll,
   approvePayroll,
   updatePayrollItemHoliday,
+  listActiveSalariedEmployees,
+  updateSalariedItemBonus,
+  createAdminUser,
+  findAdminUserByEmail,
+  findAdminUserById,
+  listAdminUsers,
+  countAdminUsers,
+  updateAdminUser,
+  updateAdminUserPassword,
+  deactivateAdminUser,
+  reactivateAdminUser,
+  getClockStats,
+  updatePayrollItemCheque,
+  markPayrollItemSent,
+  getPayrollItemById,
   PAYROLL_OVERTIME_RULE,
   HOLIDAY_PAY_RULE,
   VACATION_PAY_RULE,
@@ -55,6 +71,9 @@ const {
   MAX_AUDIT_PAGE_SIZE,
   databasePath,
 } = require("./db");
+
+const { sendStaffMessage } = require("./services/emailService");
+const { generatePayrollExcel } = require("./services/payrollExcel");
 
 const app = express();
 const PORT = config.port;
@@ -262,8 +281,23 @@ function requireAdminAuth(req, res, next) {
     });
   }
 
+  let sessionRole = "super_admin";
+  let sessionName = session.user_name || session.username;
+  let sessionEmail = session.username;
+  if (session.admin_user_id) {
+    const dbUser = findAdminUserById(session.admin_user_id);
+    if (dbUser) {
+      sessionRole = dbUser.role;
+      sessionName = dbUser.name;
+      sessionEmail = dbUser.email;
+    }
+  }
   req.adminSession = {
     username: session.username,
+    email: sessionEmail,
+    name: sessionName,
+    role: sessionRole,
+    adminUserId: session.admin_user_id,
     createdAt: session.created_at,
     expiresAt: new Date(session.expires_at).getTime(),
   };
@@ -444,6 +478,9 @@ app.post("/api/admin/employees", requireAdminAuth, (req, res) => {
     default_pay_frequency: defaultPayFrequency,
     start_date: startDate,
     vacation_pay_schedule: vacationPaySchedule,
+    pay_type: payType,
+    annual_salary: annualSalary,
+    vacation_pay_pct: vacationPayPct,
   } = req.body;
 
   if (!name || !String(name).trim() || !pin || !String(pin).trim()) {
@@ -458,28 +495,33 @@ app.post("/api/admin/employees", requireAdminAuth, (req, res) => {
     });
   }
 
-  if (defaultHourlyRate === null || defaultHourlyRate === "" || Number(defaultHourlyRate) <= 0) {
-    return res.status(400).json({
-      error: "default_hourly_rate is required and must be greater than zero.",
-    });
-  }
+  const isSalaried = payType === 'salaried';
 
-  if (!defaultPayFrequency || !normalizePayFrequency(defaultPayFrequency)) {
-    return res.status(400).json({
-      error: "default_pay_frequency is required.",
-    });
+  if (!isSalaried) {
+    if (defaultHourlyRate === null || defaultHourlyRate === "" || Number(defaultHourlyRate) <= 0) {
+      return res.status(400).json({
+        error: "default_hourly_rate is required and must be greater than zero.",
+      });
+    }
+
+    if (!defaultPayFrequency || !normalizePayFrequency(defaultPayFrequency)) {
+      return res.status(400).json({
+        error: "default_pay_frequency is required.",
+      });
+    }
   }
 
   const employee = createEmployee({
     name: String(name).trim(),
     pin: String(pin).trim(),
     active: normalizeEmployeeActive(active !== false),
-    defaultHourlyRate:
-      Number(defaultHourlyRate),
-    defaultPayFrequency:
-      normalizePayFrequency(defaultPayFrequency),
+    defaultHourlyRate: isSalaried ? null : Number(defaultHourlyRate),
+    defaultPayFrequency: isSalaried ? null : normalizePayFrequency(defaultPayFrequency),
     startDate: String(startDate),
     vacationPaySchedule: normalizeVacationPaySchedule(vacationPaySchedule),
+    payType: isSalaried ? 'salaried' : 'hourly',
+    annualSalary: isSalaried && annualSalary != null ? Number(annualSalary) : null,
+    vacationPayPct: vacationPayPct != null ? Number(vacationPayPct) : 4.0,
     adminUser: req.adminSession.username,
   });
 
@@ -507,6 +549,20 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
     default_pay_frequency: defaultPayFrequency,
     start_date: startDate,
     vacation_pay_schedule: vacationPaySchedule,
+    pay_type: payType,
+    annual_salary: annualSalary,
+    vacation_pay_pct: vacationPayPct,
+    phone,
+    email,
+    sin,
+    home_address: homeAddress,
+    hire_date: hireDate,
+    proserve_number: proserveNumber,
+    proserve_expiry: proserveExpiry,
+    roe_last_day: roeLastDay,
+    roe_hours: roeHours,
+    roe_wage: roeWage,
+    benefits_note: benefitsNote,
   } = req.body;
 
   if (startDate !== undefined && startDate !== null && startDate !== "" && !isValidStartDate(startDate)) {
@@ -515,22 +571,26 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
     });
   }
 
-  if (
-    defaultHourlyRate !== undefined &&
-    (defaultHourlyRate === null || defaultHourlyRate === "" || Number(defaultHourlyRate) <= 0)
-  ) {
-    return res.status(400).json({
-      error: "default_hourly_rate is required and must be greater than zero.",
-    });
-  }
+  const isSalaried = payType === 'salaried';
 
-  if (
-    defaultPayFrequency !== undefined &&
-    (!defaultPayFrequency || !normalizePayFrequency(defaultPayFrequency))
-  ) {
-    return res.status(400).json({
-      error: "default_pay_frequency is required.",
-    });
+  if (!isSalaried) {
+    if (
+      defaultHourlyRate !== undefined &&
+      (defaultHourlyRate === null || defaultHourlyRate === "" || Number(defaultHourlyRate) <= 0)
+    ) {
+      return res.status(400).json({
+        error: "default_hourly_rate is required and must be greater than zero.",
+      });
+    }
+
+    if (
+      defaultPayFrequency !== undefined &&
+      (!defaultPayFrequency || !normalizePayFrequency(defaultPayFrequency))
+    ) {
+      return res.status(400).json({
+        error: "default_pay_frequency is required.",
+      });
+    }
   }
 
   const updatedEmployee = updateEmployeePayrollSettings({
@@ -542,9 +602,9 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
         : String(pin).trim(),
     active: active === undefined ? null : normalizeEmployeeActive(active),
     defaultHourlyRate:
-      defaultHourlyRate === undefined ? null : Number(defaultHourlyRate),
+      isSalaried ? null : (defaultHourlyRate === undefined ? null : Number(defaultHourlyRate)),
     defaultPayFrequency:
-      defaultPayFrequency === undefined ? null : normalizePayFrequency(defaultPayFrequency),
+      isSalaried ? null : (defaultPayFrequency === undefined ? null : normalizePayFrequency(defaultPayFrequency)),
     startDate:
       startDate === undefined || startDate === null || String(startDate).trim() === ""
         ? null
@@ -553,6 +613,20 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
       vacationPaySchedule === undefined || vacationPaySchedule === null || vacationPaySchedule === ""
         ? null
         : normalizeVacationPaySchedule(vacationPaySchedule),
+    payType: payType === undefined ? undefined : (payType === 'salaried' ? 'salaried' : 'hourly'),
+    annualSalary: annualSalary === undefined ? undefined : (annualSalary != null ? Number(annualSalary) : null),
+    vacationPayPct: vacationPayPct === undefined ? undefined : Number(vacationPayPct),
+    phone: phone === undefined ? undefined : (phone || null),
+    email: email === undefined ? undefined : (email || null),
+    sin: sin === undefined ? undefined : (sin || null),
+    homeAddress: homeAddress === undefined ? undefined : (homeAddress || null),
+    hireDate: hireDate === undefined ? undefined : (hireDate || null),
+    proserveNumber: proserveNumber === undefined ? undefined : (proserveNumber || null),
+    proserveExpiry: proserveExpiry === undefined ? undefined : (proserveExpiry || null),
+    roeLastDay: roeLastDay === undefined ? undefined : (roeLastDay || null),
+    roeHours: roeHours === undefined ? undefined : (roeHours != null ? Number(roeHours) : null),
+    roeWage: roeWage === undefined ? undefined : (roeWage != null ? Number(roeWage) : null),
+    benefitsNote: benefitsNote === undefined ? undefined : (benefitsNote || null),
     adminUser: req.adminSession.username,
   });
 
@@ -590,7 +664,8 @@ app.delete("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
 });
 
 app.post("/api/admin/login", (req, res) => {
-  const { username, password } = req.body;
+  const { email, username, password } = req.body;
+  const loginEmail = email || username;
   const ipAddress = getRequestIp(req);
   cleanupAdminLoginAttempts(
     new Date(Date.now() - ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS).toISOString(),
@@ -604,10 +679,30 @@ app.post("/api/admin/login", (req, res) => {
     });
   }
 
-  if (
-    username !== ADMIN_USERNAME ||
-    !verifySecret(password, ADMIN_PASSWORD_HASH)
-  ) {
+  let adminUserId = null;
+  let adminUserName = null;
+  let adminUserEmail = null;
+  let adminUserRole = "super_admin";
+  let authenticated = false;
+
+  // Check admin_users table first
+  const dbUser = findAdminUserByEmail(loginEmail);
+  if (dbUser && verifySecret(password, dbUser.password_hash)) {
+    authenticated = true;
+    adminUserId = dbUser.id;
+    adminUserName = dbUser.name;
+    adminUserEmail = dbUser.email;
+    adminUserRole = dbUser.role;
+  } else if (countAdminUsers() === 0) {
+    // Fall back to config-based login when no DB users exist
+    if (loginEmail === ADMIN_USERNAME && verifySecret(password, ADMIN_PASSWORD_HASH)) {
+      authenticated = true;
+      adminUserName = ADMIN_USERNAME;
+      adminUserEmail = ADMIN_USERNAME;
+    }
+  }
+
+  if (!authenticated) {
     registerFailedLoginAttempt(ipAddress);
     return res.status(401).json({
       error: "Credenciais invalidas.",
@@ -619,16 +714,21 @@ app.post("/api/admin/login", (req, res) => {
   const now = Date.now();
   const session = createAdminSession({
     token,
-    username,
+    username: adminUserEmail || loginEmail,
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + ADMIN_SESSION_TTL_MS).toISOString(),
+    adminUserId,
+    userName: adminUserName,
   });
 
   return res.json({
     success: true,
     token,
     user: {
-      username,
+      id: adminUserId,
+      name: adminUserName,
+      email: adminUserEmail,
+      role: adminUserRole,
     },
     expires_at: session.expires_at,
   });
@@ -638,7 +738,11 @@ app.get("/api/admin/session", requireAdminAuth, (req, res) => {
   res.json({
     authenticated: true,
     user: {
+      id: req.adminSession.adminUserId,
       username: req.adminSession.username,
+      name: req.adminSession.name,
+      email: req.adminSession.email,
+      role: req.adminSession.role,
     },
     expires_at: new Date(req.adminSession.expiresAt).toISOString(),
   });
@@ -860,7 +964,7 @@ app.get(
   },
 );
 
-app.get("/api/admin/payrolls/:id/export", requireAdminAuth, (req, res) => {
+app.get("/api/admin/payrolls/:id/export", requireAdminAuth, async (req, res) => {
   const payrollId = Number(req.params.id);
 
   if (!payrollId) {
@@ -877,61 +981,17 @@ app.get("/api/admin/payrolls/:id/export", requireAdminAuth, (req, res) => {
     });
   }
 
-  const escapeCsvValue = (value) => {
-    if (value === null || value === undefined) {
-      return "";
-    }
+  const workbookBuffer = await generatePayrollExcel(payroll);
 
-    const stringValue = String(value).replace(/"/g, '""');
-    return `"${stringValue}"`;
-  };
-
-  const header = [
-    "Employee Name",
-    "Gross",
-    "Vacation Pay",
-    "Holiday Pay",
-    "Total Earnings",
-    "Federal",
-    "Provincial",
-    "Tax Total",
-    "CPP",
-    "CPP - employer",
-    "EI",
-    "EI - employer",
-    "Net",
-    "Deduction",
-  ];
-
-  const rows = payroll.items.map((item) =>
-    [
-      item.employee_name,
-      item.gross_pay,
-      item.vacation_payout,
-      item.holiday_pay,
-      item.total_earnings,
-      item.federal_tax,
-      item.provincial_tax,
-      item.tax_total,
-      item.cpp_total,
-      item.cpp_employer,
-      item.ei_deduction,
-      item.ei_employer,
-      item.net_pay,
-      item.total_deductions,
-    ]
-      .map(escapeCsvValue)
-      .join(","),
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   );
-
-  const csv = [header.join(","), ...rows].join("\n");
-
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="payroll-${payrollId}.csv"`,
+    `attachment; filename="payroll-${payrollId}.xlsx"`,
   );
-  res.send(csv);
+  res.send(Buffer.from(workbookBuffer));
 });
 
 app.post("/api/admin/payrolls/generate", requireAdminAuth, (req, res) => {
@@ -947,6 +1007,7 @@ app.post("/api/admin/payrolls/generate", requireAdminAuth, (req, res) => {
     pay_frequency: payFrequency,
     hourly_rate: hourlyRate,
     hourly_rates: hourlyRates,
+    salaried_bonuses: salariedBonuses,
   } = req.body;
 
   if (!isValidPeriodDate(startDate) || !isValidPeriodDate(endDate)) {
@@ -993,6 +1054,8 @@ app.post("/api/admin/payrolls/generate", requireAdminAuth, (req, res) => {
           : Number(hourlyRate),
       hourlyRatesByEmployee:
         hourlyRates && typeof hourlyRates === "object" ? hourlyRates : {},
+      salariedBonusByEmployee:
+        salariedBonuses && typeof salariedBonuses === "object" ? salariedBonuses : {},
       adminUser: req.adminSession.username,
     });
 
@@ -1138,6 +1201,24 @@ app.put(
     }
   },
 );
+
+app.patch("/api/admin/payrolls/:payrollId/items/:itemId/salary-bonus", requireAdminAuth, (req, res) => {
+  const payrollId = Number(req.params.payrollId);
+  const itemId = Number(req.params.itemId);
+  const { bonus } = req.body;
+  try {
+    const payroll = updateSalariedItemBonus({
+      payrollPeriodId: payrollId,
+      payrollItemId: itemId,
+      bonus: bonus ?? 0,
+      adminUser: req.adminSession.username,
+    });
+    if (!payroll) return res.status(404).json({ error: "Item not found." });
+    return res.json(payroll);
+  } catch (e) {
+    return res.status(409).json({ error: e.message });
+  }
+});
 
 app.post("/api/admin/time-records", requireAdminAuth, (req, res) => {
   const {
@@ -1571,6 +1652,174 @@ app.post("/api/time", (req, res) => {
     success: true,
     record,
   });
+});
+
+// Admin user management endpoints
+app.get("/api/admin/users", requireAdminAuth, (req, res) => {
+  try {
+    res.json(listAdminUsers());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/users", requireAdminAuth, (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required." });
+    if (!email || !String(email).trim()) return res.status(400).json({ error: "Email is required." });
+    if (!password || String(password).length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+    const existing = findAdminUserByEmail(email);
+    if (existing) return res.status(409).json({ error: "Email already in use." });
+    const { hashSecret } = require("./security");
+    const passwordHash = hashSecret(password);
+    const result = createAdminUser({ name: String(name).trim(), email: String(email).trim(), passwordHash, role: "super_admin" });
+    res.status(201).json({ id: result.lastInsertRowid, name, email, role: "super_admin" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/users/me", requireAdminAuth, (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required." });
+    if (!req.adminSession.adminUserId) return res.status(400).json({ error: "No DB user associated with this session." });
+    updateAdminUser(req.adminSession.adminUserId, { name: String(name).trim() });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/users/me/password", requireAdminAuth, (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ error: "New password must be at least 8 characters." });
+    if (!req.adminSession.adminUserId) return res.status(400).json({ error: "No DB user associated with this session." });
+    const dbUser = findAdminUserById(req.adminSession.adminUserId);
+    if (!dbUser) return res.status(404).json({ error: "User not found." });
+    const { hashSecret, verifySecret: vs } = require("./security");
+    if (currentPassword && !vs(currentPassword, dbUser.password_hash)) {
+      return res.status(401).json({ error: "Current password is incorrect." });
+    }
+    updateAdminUserPassword(req.adminSession.adminUserId, hashSecret(newPassword));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/users/:id/password", requireAdminAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { newPassword } = req.body;
+    if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
+    const { hashSecret } = require("./security");
+    updateAdminUserPassword(id, hashSecret(newPassword));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/users/:id/deactivate", requireAdminAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (id === req.adminSession.adminUserId) return res.status(400).json({ error: "Cannot deactivate yourself." });
+    deactivateAdminUser(id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/users/:id/reactivate", requireAdminAuth, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    reactivateAdminUser(id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clock stats
+app.get("/api/admin/clock-stats", requireAdminAuth, (req, res) => {
+  try {
+    const stats = getClockStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pay & Send endpoints
+app.patch("/api/admin/payrolls/:id/items", requireAdminAuth, (req, res) => {
+  try {
+    const { items } = req.body;
+    for (const item of items) {
+      updatePayrollItemCheque(item.id, { paymentReference: item.payment_reference, sendStatus: item.send_status });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/payrolls/:payrollId/items/:itemId/send", requireAdminAuth, async (req, res) => {
+  try {
+    const item = getPayrollItemById(Number(req.params.itemId));
+    if (!item) return res.status(404).json({ error: "Item not found" });
+    if (!item.employee_email) return res.status(400).json({ error: "Employee has no email address" });
+
+    const payslip = getPayrollPayslip(Number(req.params.payrollId), Number(req.params.itemId));
+    const adminEmail = req.adminSession.email || "";
+    try {
+      const { sendPayrollEmail } = require("./services/email");
+      await sendPayrollEmail({ name: item.employee_name, email: item.employee_email }, payslip, adminEmail);
+    } catch (_emailErr) {
+      // Email sending failed but we still mark it
+    }
+    markPayrollItemSent(Number(req.params.itemId));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Messages send endpoint
+app.post("/api/admin/messages/send", requireAdminAuth, async (req, res) => {
+  try {
+    const { recipientIds, subject, body, bccSelf } = req.body;
+    if (!recipientIds || !recipientIds.length) return res.status(400).json({ error: "No recipients selected." });
+    if (!subject?.trim()) return res.status(400).json({ error: "Subject is required." });
+    if (!body?.trim()) return res.status(400).json({ error: "Message body is required." });
+
+    // Get employees with emails
+    const allEmployees = listEmployees();
+    const recipients = allEmployees.filter(e => recipientIds.includes(e.id) && e.email);
+
+    if (!recipients.length) return res.status(400).json({ error: "None of the selected employees have email addresses." });
+
+    const bccEmail = bccSelf ? (req.adminSession.email || "") : undefined;
+    const results = await sendStaffMessage({ recipients, subject, body, bccEmail });
+
+    res.json({ ok: true, sent: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Test email endpoint
+app.post("/api/admin/email/test", requireAdminAuth, async (req, res) => {
+  try {
+    const { sendTestEmail } = require("./services/email");
+    await sendTestEmail(req.adminSession.email || req.adminSession.username);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 if (hasFrontendBuild) {

@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  UsersRound, Clock, StickyNote, SendHorizontal, Mail, History,
+  Settings2, ArrowLeft, LogOut, TriangleAlert, Calendar,
+  CheckCircle, IdCard, Hourglass, UserPlus, Timer, ClipboardList
+} from "lucide-react";
 import "./AdminView.css";
 import "./PayrollPayslip.css";
 
 const API_BASE_URL = "/api";
 const DEFAULT_PAGE_SIZE = 10;
 const ADMIN_TOKEN_KEY = "restaurant-admin-token";
+const COMPANY_NAME = "Sushi House Banff";
+const COMPANY_ADDRESS = "304 Caribou Street, P.O. Box 1985, Banff, Alberta, Canada T1L 1B7";
 
 const initialFormState = {
   employeeId: "",
@@ -58,6 +65,9 @@ const initialEmployeeFormState = {
   defaultPayFrequency: "",
   startDate: "",
   vacationPaySchedule: "monthly",
+  pay_type: "hourly",
+  annual_salary: "",
+  vacation_pay_pct: 4,
 };
 
 function buildHolidayInputState(items = []) {
@@ -84,19 +94,33 @@ function clearStoredAdminToken() {
   window.localStorage.removeItem(ADMIN_TOKEN_KEY);
 }
 
+const TZ = "America/Edmonton";
+
 function formatDateTime(value) {
-  return value ? new Date(value).toLocaleString() : "-";
+  if (!value) return "-";
+  return new Date(value).toLocaleString("en-CA", {
+    timeZone: TZ,
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function toDateTimeLocalValue(value) {
-  if (!value) {
-    return "";
-  }
-
+  if (!value) return "";
   const date = new Date(value);
-  const offset = date.getTimezoneOffset();
-  const localDate = new Date(date.getTime() - offset * 60 * 1000);
-  return localDate.toISOString().slice(0, 16);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const p = {};
+  parts.forEach(({ type, value: v }) => { p[type] = v; });
+  const h = p.hour === "24" ? "00" : p.hour;
+  return `${p.year}-${p.month}-${p.day}T${h}:${p.minute}`;
 }
 
 function toIsoString(value) {
@@ -164,6 +188,34 @@ function formatMoney(value) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
+function formatHours(value) {
+  return `${Number(value || 0).toFixed(2)} hrs`;
+}
+
+function getVacationPayPercentForStartDate(startDate, referenceDate = new Date()) {
+  if (!startDate) {
+    return 0;
+  }
+
+  const start = new Date(`${startDate}T00:00:00`);
+  const reference = new Date(referenceDate);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(reference.getTime())) {
+    return 0;
+  }
+
+  let years = reference.getFullYear() - start.getFullYear();
+  const anniversary = new Date(reference.getFullYear(), start.getMonth(), start.getDate());
+
+  if (reference < anniversary) {
+    years -= 1;
+  }
+
+  if (years >= 5) return 6;
+  if (years >= 1) return 4;
+  return 0;
+}
+
 function getPayslipEarningsRows(payslip) {
   const rows = [
     {
@@ -222,14 +274,16 @@ function getPayslipDeductionRows(payslip) {
 }
 
 function buildPayslipPrintHtml(payslip) {
+  const benefitsNote = payslip.benefits_note || "";
   const earningsRows = getPayslipEarningsRows(payslip)
-    .map(
-      (row) => `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td>${formatMoney(row.value)}</td></tr>`,
-    )
+    .map((row, index) => {
+      const benefitCell = index === 0 && benefitsNote ? benefitsNote : "";
+      return `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td class="amount">${formatMoney(row.value)}</td><td class="benefits">${benefitCell}</td></tr>`;
+    })
     .join("");
   const deductionRows = getPayslipDeductionRows(payslip)
     .map(
-      (row) => `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td>${formatMoney(row.value)}</td></tr>`,
+      (row) => `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td class="amount">${formatMoney(row.value)}</td><td class="benefits"></td></tr>`,
     )
     .join("");
   return `<!doctype html>
@@ -240,16 +294,19 @@ function buildPayslipPrintHtml(payslip) {
       <style>
         body { font-family: Arial, Helvetica, sans-serif; background: #f3f4f6; color: #111111; padding: 24px; }
         .sheet { max-width: 900px; margin: 0 auto; background: white; border: 1px solid #4b5563; }
-        .header { padding: 18px 22px 10px; }
-        .title { font-size: 24px; font-weight: 700; margin: 0; }
-        .subtitle { color: #4b5563; font-size: 13px; margin: 4px 0 0; }
+        .header { padding: 18px 22px 10px; display: flex; align-items: center; gap: 14px; }
+        .header-logo { height: 52px; width: auto; }
+        .title { font-size: 20px; font-weight: 700; margin: 0; }
+        .address { color: #4b5563; font-size: 12px; margin: 2px 0 0; }
+        .subtitle { color: #111111; font-size: 13px; font-weight: 600; margin: 4px 0 0; }
         .meta-table, .statement-table { width: calc(100% - 44px); margin: 0 22px 18px; border-collapse: collapse; }
         .meta-table td { border: 1px solid #6b7280; padding: 10px 12px; font-size: 13px; vertical-align: top; }
         .meta-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #4b5563; margin-bottom: 4px; }
         .meta-value { font-size: 14px; font-weight: 600; color: #111111; }
         .statement-table th, .statement-table td { border: 1px solid #6b7280; padding: 10px 12px; font-size: 14px; }
         .statement-table th { background: #e5e7eb; text-transform: uppercase; font-size: 12px; letter-spacing: .04em; text-align: left; }
-        .statement-table td:last-child, .statement-table th:last-child { text-align: right; width: 180px; }
+        .statement-table .amount, .statement-table th.amount { text-align: right; width: 160px; }
+        .statement-table .benefits, .statement-table th.benefits { width: 260px; white-space: pre-line; }
         .section-row td { background: #f3f4f6; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
         .is-total td { font-weight: 700; background: #fafafa; }
         .net-row td { font-weight: 700; font-size: 18px; background: #e5e7eb; }
@@ -260,13 +317,18 @@ function buildPayslipPrintHtml(payslip) {
     <body>
       <div class="sheet">
         <div class="header">
-          <h1 class="title">Earnings Statement</h1>
-          <p class="subtitle">Restaurant payroll statement</p>
+          <img class="header-logo" src="/logo.png" alt="${COMPANY_NAME} logo" />
+          <div>
+            <h1 class="title">${COMPANY_NAME}</h1>
+            <p class="address">${COMPANY_ADDRESS}</p>
+            <p class="subtitle">Employee Earnings Statement</p>
+          </div>
         </div>
         <table class="meta-table">
           <tr>
             <td><span class="meta-label">Employee</span><span class="meta-value">${payslip.header.employee}</span></td>
             <td><span class="meta-label">Pay Period</span><span class="meta-value">${payslip.header.pay_period}</span></td>
+            <td><span class="meta-label">Total Hours</span><span class="meta-value">${formatHours(payslip.header.total_hours)}</span></td>
             <td><span class="meta-label">Wage Rate</span><span class="meta-value">${payslip.header.wage_rate}</span></td>
             <td><span class="meta-label">Pay Date</span><span class="meta-value">${payslip.header.pay_date}</span></td>
             <td><span class="meta-label">Payment Reference</span><span class="meta-value">${payslip.header.payment_reference || "-"}</span></td>
@@ -276,15 +338,16 @@ function buildPayslipPrintHtml(payslip) {
           <thead>
             <tr>
               <th>Description</th>
-              <th>Amount</th>
+              <th class="amount">Amount</th>
+              <th class="benefits">Benefits</th>
             </tr>
           </thead>
           <tbody>
-            <tr class="section-row"><td colspan="2">Income / Earnings</td></tr>
+            <tr class="section-row"><td colspan="3">Income / Earnings</td></tr>
             ${earningsRows}
-            <tr class="section-row"><td colspan="2">Deductions</td></tr>
+            <tr class="section-row"><td colspan="3">Deductions</td></tr>
             ${deductionRows}
-            <tr class="net-row"><td>Net Pay</td><td>${formatMoney(payslip.totals.net_pay)}</td></tr>
+            <tr class="net-row"><td>Net Pay</td><td class="amount">${formatMoney(payslip.totals.net_pay)}</td><td class="benefits"></td></tr>
           </tbody>
         </table>
         ${payslip.notes.accrued_vacation_balance_note ? `<div class="note">${payslip.notes.accrued_vacation_balance_note}</div>` : ""}
@@ -381,6 +444,9 @@ function buildQueryString(filters, pagination = {}) {
   if (filters.recordStatus) {
     query.set("record_status", filters.recordStatus);
   }
+  if (filters.open_only) {
+    query.set("open_only", "true");
+  }
   if (pagination.page) {
     query.set("page", pagination.page);
   }
@@ -466,6 +532,86 @@ function PaginationControls({ response, onPageChange, onPageSizeChange }) {
   );
 }
 
+function proserveStatus(expiry) {
+  if (!expiry) return null;
+  const days = Math.floor((new Date(expiry) - new Date()) / 86400000);
+  if (days < 0) return "expired";
+  if (days <= 60) return "expiring";
+  return "ok";
+}
+
+function FormSection({ icon, label }) {
+  return (
+    <div className="admin-form-section">
+      {icon && <span>{icon}</span>}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+const FIELD_LABELS = {
+  name: "Name",
+  active: "Status",
+  default_hourly_rate: "Hourly rate",
+  default_pay_frequency: "Pay frequency",
+  start_date: "Start date",
+  vacation_pay_schedule: "Vacation pay",
+  pay_type: "Pay type",
+  annual_salary: "Annual salary",
+  email: "Email",
+  phone: "Phone",
+  sin: "SIN",
+  home_address: "Address",
+  proserve_number: "ProServe #",
+  proserve_expiry: "ProServe expiry",
+  roe_last_day: "ROE last day",
+  roe_hours: "ROE hours",
+  roe_wage: "ROE wage",
+  notes: "Notes",
+  recorded_at: "Time",
+  entry_type: "Type",
+  entry_mode: "Mode",
+  kiosk_id: "Kiosk ID",
+};
+
+function AuditDiff({ changedFields }) {
+  if (!changedFields) return <span style={{ color: "var(--c-text-muted)", fontSize: "0.78rem" }}>—</span>;
+  let parsed = changedFields;
+  if (typeof parsed === "string") {
+    try { parsed = JSON.parse(parsed); } catch { return <pre style={{ fontSize: "0.75rem", whiteSpace: "pre-wrap" }}>{changedFields}</pre>; }
+  }
+  const { before, after } = parsed;
+  const keys = Object.keys(after || {}).filter(k => k !== "pin_hash" && k !== "pin");
+  const MAX_SHOW = 4;
+  const shown = keys.slice(0, MAX_SHOW);
+  const rest = keys.length - MAX_SHOW;
+  const isCreation = !before || Object.keys(before).length === 0;
+  return (
+    <div className="audit-diff">
+      {shown.map(k => {
+        const label = FIELD_LABELS[k] || k;
+        const newVal = String(after[k] ?? "");
+        const oldVal = before ? String(before[k] ?? "") : null;
+        return (
+          <div key={k} className="audit-diff__row">
+            <span className="audit-diff__key">{label}</span>
+            {isCreation || oldVal === null ? (
+              <span className="audit-diff__created">{newVal || "—"}</span>
+            ) : (
+              <>
+                {oldVal !== newVal && <span className="audit-diff__old">{oldVal || "—"}</span>}
+                {oldVal !== newVal && <span className="audit-diff__arrow">→</span>}
+                <span className="audit-diff__new">{newVal || "—"}</span>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {rest > 0 && <div className="audit-diff__more">+{rest} more field{rest > 1 ? "s" : ""}</div>}
+    </div>
+  );
+}
+
 function SectionTabs({ tabs, activeTab, onChange, columnsClassName = "grid-cols-4" }) {
   const widthClass =
     columnsClassName === "grid-cols-3" ? "admin-tabs--three" : "admin-tabs--four";
@@ -487,9 +633,9 @@ function SectionTabs({ tabs, activeTab, onChange, columnsClassName = "grid-cols-
 }
 
 function LoginView({
-  username,
+  email,
   password,
-  onUsernameChange,
+  onEmailChange,
   onPasswordChange,
   onSubmit,
   error,
@@ -498,17 +644,20 @@ function LoginView({
   return (
     <div className="admin-login-shell">
       <div className="admin-login-card">
-        <h1 className="admin-login-card__title">Admin Login</h1>
-        <p className="admin-login-card__subtitle">Sign in to access the administration area.</p>
+        <div className="admin-login-card__logo"><img src="/logo.png" alt="Sushi House Banff" /></div>
+        <h1 className="admin-login-card__title">Sushi House Banff</h1>
+        <p className="admin-login-card__subtitle">Sign in to access the admin panel.</p>
 
         <form onSubmit={onSubmit} className="admin-login-form">
           <label className="admin-field">
-            <span className="admin-field__label">Username</span>
+            <span className="admin-field__label">Email</span>
             <input
-              type="text"
-              value={username}
-              onChange={(event) => onUsernameChange(event.target.value)}
+              type="email"
+              value={email}
+              onChange={(event) => onEmailChange(event.target.value)}
               className="admin-input"
+              autoComplete="email"
+              placeholder="you@example.com"
               required
             />
           </label>
@@ -572,13 +721,18 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
 
   const earningsRows = getPayslipEarningsRows(payslip);
   const deductionRows = getPayslipDeductionRows(payslip);
+  const benefitsNote = payslip.benefits_note || "";
 
   return (
     <div className="payslip-sheet">
       <div className="payslip-sheet__header">
-        <div>
-          <h3 className="payslip-sheet__title">Employee Earnings Statement</h3>
-          <p className="payslip-sheet__subtitle">Printable employee-facing payroll summary.</p>
+        <div className="payslip-sheet__brand">
+          <img src="/logo.png" alt={`${COMPANY_NAME} logo`} className="payslip-sheet__logo" />
+          <div>
+            <h3 className="payslip-sheet__title">{COMPANY_NAME}</h3>
+            <p className="payslip-sheet__address">{COMPANY_ADDRESS}</p>
+            <p className="payslip-sheet__subtitle">Employee Earnings Statement</p>
+          </div>
         </div>
         <div className="admin-actions-row">
           <button onClick={onPrint} className="admin-button admin-button--secondary admin-button--compact">
@@ -596,6 +750,7 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
             {[
               ["Employee", payslip.header.employee],
               ["Pay Period", payslip.header.pay_period],
+              ["Total Hours", formatHours(payslip.header.total_hours)],
               ["Wage Rate", payslip.header.wage_rate],
               ["Pay Date", payslip.header.pay_date],
               ["Payment Reference", payslip.header.payment_reference || "-"],
@@ -613,31 +768,37 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
         <thead>
           <tr>
             <th>Description</th>
-            <th>Amount</th>
+            <th className="payslip-statement-table__amount">Amount</th>
+            <th className="payslip-statement-table__benefits">Benefits</th>
           </tr>
         </thead>
         <tbody>
           <tr className="payslip-section-row">
-            <td colSpan="2">Income / Earnings</td>
+            <td colSpan="3">Income / Earnings</td>
           </tr>
-          {earningsRows.map((row) => (
+          {earningsRows.map((row, index) => (
             <tr key={row.label} className={row.isTotal ? "is-total" : ""}>
               <td>{row.label}</td>
-              <td>{formatMoney(row.value)}</td>
+              <td className="payslip-statement-table__amount">{formatMoney(row.value)}</td>
+              <td className="payslip-statement-table__benefits">
+                {index === 0 && benefitsNote ? benefitsNote : ""}
+              </td>
             </tr>
           ))}
           <tr className="payslip-section-row">
-            <td colSpan="2">Deductions</td>
+            <td colSpan="3">Deductions</td>
           </tr>
           {deductionRows.map((row) => (
             <tr key={row.label} className={row.isTotal ? "is-total" : ""}>
               <td>{row.label}</td>
-              <td>{formatMoney(row.value)}</td>
+              <td className="payslip-statement-table__amount">{formatMoney(row.value)}</td>
+              <td className="payslip-statement-table__benefits"></td>
             </tr>
           ))}
           <tr className="payslip-net-row">
             <td>Net Pay</td>
-            <td>{formatMoney(payslip.totals.net_pay)}</td>
+            <td className="payslip-statement-table__amount">{formatMoney(payslip.totals.net_pay)}</td>
+            <td className="payslip-statement-table__benefits"></td>
           </tr>
         </tbody>
       </table>
@@ -649,10 +810,771 @@ function PayslipPreview({ payslip, onPrint, onClose }) {
   );
 }
 
+function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [editingAccount, setEditingAccount] = useState(false);
+  const [accountForm, setAccountForm] = useState({ name: adminUser?.name || "", currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [newUserForm, setNewUserForm] = useState({ name: "", email: "", password: "" });
+  const [resetingId, setResetingId] = useState(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [error, setError] = useState("");
+  const [testEmailStatus, setTestEmailStatus] = useState("");
+
+  const loadUsers = useCallback(async () => {
+    const res = await adminFetch("/api/admin/users");
+    if (res.ok) { const data = await res.json(); setAdminUsers(data); }
+  }, [adminFetch]);
+
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  const showFeedback = (msg) => { setFeedback(msg); setError(""); setTimeout(() => setFeedback(""), 3000); };
+  const showError = (msg) => { setError(msg); setFeedback(""); };
+
+  const handleSaveAccount = async () => {
+    if (accountForm.newPassword && accountForm.newPassword !== accountForm.confirmPassword) {
+      return showError("Passwords do not match.");
+    }
+    try {
+      if (accountForm.name !== adminUser?.name) {
+        const r = await adminFetch("/api/admin/users/me", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: accountForm.name }) });
+        if (!r.ok) { const d = await r.json(); return showError(d.error || "Failed to update name."); }
+        if (onUserUpdated) onUserUpdated({ ...adminUser, name: accountForm.name });
+      }
+      if (accountForm.newPassword) {
+        const r = await adminFetch("/api/admin/users/me/password", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: accountForm.currentPassword, newPassword: accountForm.newPassword }) });
+        if (!r.ok) { const d = await r.json(); return showError(d.error || "Failed to change password."); }
+      }
+      showFeedback("Account updated successfully.");
+      setEditingAccount(false);
+      setAccountForm(f => ({ ...f, currentPassword: "", newPassword: "", confirmPassword: "" }));
+    } catch (e) { showError(e.message); }
+  };
+
+  const handleAddUser = async () => {
+    try {
+      const r = await adminFetch("/api/admin/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newUserForm) });
+      const d = await r.json();
+      if (!r.ok) return showError(d.error || "Failed to add user.");
+      showFeedback("User added.");
+      setAddUserOpen(false);
+      setNewUserForm({ name: "", email: "", password: "" });
+      loadUsers();
+    } catch (e) { showError(e.message); }
+  };
+
+  const handleDeactivate = async (id) => {
+    if (!window.confirm("Deactivate this admin user?")) return;
+    const r = await adminFetch(`/api/admin/users/${id}/deactivate`, { method: "PUT" });
+    if (r.ok) { showFeedback("User deactivated."); loadUsers(); }
+  };
+
+  const handleReactivate = async (id) => {
+    const r = await adminFetch(`/api/admin/users/${id}/reactivate`, { method: "PUT" });
+    if (r.ok) { showFeedback("User reactivated."); loadUsers(); }
+  };
+
+  const handleResetPassword = async (id) => {
+    if (!resetPassword) return showError("Enter a new password.");
+    const r = await adminFetch(`/api/admin/users/${id}/password`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newPassword: resetPassword }) });
+    if (r.ok) { showFeedback("Password reset."); setResetingId(null); setResetPassword(""); }
+    else { const d = await r.json(); showError(d.error || "Failed."); }
+  };
+
+  const handleTestEmail = async () => {
+    setTestEmailStatus("Sending...");
+    try {
+      const r = await adminFetch("/api/admin/email/test", { method: "POST" });
+      const d = await r.json();
+      if (r.ok) setTestEmailStatus("Test email sent successfully!");
+      else setTestEmailStatus(`Error: ${d.error}`);
+    } catch (e) { setTestEmailStatus(`Error: ${e.message}`); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      {feedback && <div className="admin-alert admin-alert--success">{feedback}</div>}
+      {error && <div className="admin-alert admin-alert--error">{error}</div>}
+
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">My Account</h2>
+          </div>
+        </div>
+        {!editingAccount ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+            <div className="emp-table__avatar" style={{ width: 44, height: 44, fontSize: "1.1rem" }}>
+              {(adminUser?.name || "A")[0].toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--c-text-primary)" }}>{adminUser?.name || "Admin"}</div>
+              <div style={{ fontSize: "0.8rem", color: "var(--c-text-muted)" }}>{adminUser?.email || ""}</div>
+            </div>
+            <button className="admin-employee-card-btn" style={{ marginLeft: "auto" }} onClick={() => { setEditingAccount(true); setAccountForm(f => ({ ...f, name: adminUser?.name || "" })); }}>
+              Edit account
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", maxWidth: 560 }}>
+            <label className="admin-field" style={{ gridColumn: "1/-1" }}>
+              <span className="admin-field__label">Name</span>
+              <input className="admin-input" value={accountForm.name} onChange={e => setAccountForm(f => ({ ...f, name: e.target.value }))} />
+            </label>
+            <label className="admin-field">
+              <span className="admin-field__label">Current password</span>
+              <input type="password" className="admin-input" value={accountForm.currentPassword} onChange={e => setAccountForm(f => ({ ...f, currentPassword: e.target.value }))} placeholder="Leave blank to keep" />
+            </label>
+            <label className="admin-field">
+              <span className="admin-field__label">New password</span>
+              <input type="password" className="admin-input" value={accountForm.newPassword} onChange={e => setAccountForm(f => ({ ...f, newPassword: e.target.value }))} />
+            </label>
+            <label className="admin-field">
+              <span className="admin-field__label">Confirm password</span>
+              <input type="password" className="admin-input" value={accountForm.confirmPassword} onChange={e => setAccountForm(f => ({ ...f, confirmPassword: e.target.value }))} />
+            </label>
+            <div style={{ gridColumn: "1/-1", display: "flex", gap: "0.75rem" }}>
+              <button className="admin-button admin-button--primary admin-button--compact" onClick={handleSaveAccount}>Save</button>
+              <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setEditingAccount(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">Admin Users</h2>
+            <span className="admin-team-header__count">{adminUsers.length} user{adminUsers.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="admin-team-toolbar__right">
+            <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setAddUserOpen(o => !o)}>
+              {addUserOpen ? "✕ Cancel" : "+ Add admin"}
+            </button>
+          </div>
+        </div>
+
+        {addUserOpen && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.25rem", padding: "1rem", background: "var(--c-bg)", borderRadius: "var(--r-card-inner)" }}>
+            <label className="admin-field">
+              <span className="admin-field__label">Name</span>
+              <input className="admin-input" value={newUserForm.name} onChange={e => setNewUserForm(f => ({ ...f, name: e.target.value }))} />
+            </label>
+            <label className="admin-field">
+              <span className="admin-field__label">Email</span>
+              <input type="email" className="admin-input" value={newUserForm.email} onChange={e => setNewUserForm(f => ({ ...f, email: e.target.value }))} />
+            </label>
+            <label className="admin-field">
+              <span className="admin-field__label">Password (min 8 chars)</span>
+              <input type="password" className="admin-input" value={newUserForm.password} onChange={e => setNewUserForm(f => ({ ...f, password: e.target.value }))} />
+            </label>
+            <div style={{ gridColumn: "1/-1" }}>
+              <button className="admin-button admin-button--primary admin-button--compact" onClick={handleAddUser}>Add user</button>
+            </div>
+          </div>
+        )}
+
+        <table className="emp-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th style={{ textAlign: "right" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {adminUsers.map(user => {
+              const isMe = user.id === adminUser?.id;
+              return [
+                <tr key={user.id} className="emp-table__row" style={{ opacity: user.active ? 1 : 0.5 }}>
+                  <td>
+                    <div className="emp-table__name-cell">
+                      <div className="emp-table__avatar">{(user.name || "?")[0].toUpperCase()}</div>
+                      <div className="emp-table__name-stack">
+                        <span className="emp-table__name">{user.name}{isMe ? <span style={{ marginLeft: 6, fontSize: "0.7rem", background: "var(--c-jade-soft)", color: "var(--c-jade)", padding: "1px 6px", borderRadius: 50 }}>You</span> : null}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="emp-table__data">{user.email}</td>
+                  <td><span className={`emp-status-badge ${user.active ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>{user.active ? "Active" : "Inactive"}</span></td>
+                  <td className="emp-table__data">{user.created_at ? new Date(user.created_at).toLocaleDateString("en-CA", { timeZone: TZ }) : "—"}</td>
+                  <td className="emp-table__actions-cell" style={{ whiteSpace: "nowrap" }}>
+                    {!isMe && (
+                      <>
+                        <button className="admin-employee-card-btn" style={{ marginRight: 4 }} onClick={() => { setResetingId(resetingId === user.id ? null : user.id); setResetPassword(""); }}>Reset pw</button>
+                        {user.active
+                          ? <button className="admin-employee-card-btn" onClick={() => handleDeactivate(user.id)}>Deactivate</button>
+                          : <button className="admin-employee-card-btn" onClick={() => handleReactivate(user.id)}>Reactivate</button>}
+                      </>
+                    )}
+                  </td>
+                </tr>,
+                resetingId === user.id ? (
+                  <tr key={`reset-${user.id}`} className="emp-detail-row">
+                    <td colSpan={5} className="emp-detail-cell">
+                      <div style={{ padding: "0.75rem 1.5rem", display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                        <input type="password" className="admin-input" placeholder="New password (min 8 chars)" value={resetPassword} onChange={e => setResetPassword(e.target.value)} style={{ maxWidth: 260 }} />
+                        <button className="admin-button admin-button--primary admin-button--compact" onClick={() => handleResetPassword(user.id)}>Set password</button>
+                        <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setResetingId(null)}>Cancel</button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">Email Configuration</h2>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "0.75rem", color: "var(--c-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Sender</div>
+            <div style={{ marginTop: 2, fontWeight: 500 }}>Sushi House Banff &lt;payroll@mail.sushihousebanff.ca&gt;</div>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            {testEmailStatus && <span style={{ fontSize: "0.85rem", color: testEmailStatus.includes("Error") ? "var(--c-accent)" : "var(--c-jade)" }}>{testEmailStatus}</span>}
+            <button className="admin-button admin-button--secondary admin-button--compact" onClick={handleTestEmail}>Send test email</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
+  const [selectedPayrollId, setSelectedPayrollId] = useState("");
+  const [items, setItems] = useState([]);
+  const [chequeInputs, setChequeInputs] = useState({});
+  const [confirmedCheques, setConfirmedCheques] = useState({});
+  const [editingCheques, setEditingCheques] = useState({});
+  const [selectedItems, setSelectedItems] = useState({});
+  const [previewPayslip, setPreviewPayslip] = useState(null);
+  const [sending, setSending] = useState({});
+  const [feedback, setFeedback] = useState("");
+  const [error, setError] = useState("");
+  // confirmModal: null | { mode: "bulk", toSend: [] } | { mode: "single", item: {} }
+  const [confirmModal, setConfirmModal] = useState(null);
+
+  const selectedPayroll = payrolls?.find(p => String(p.id) === String(selectedPayrollId));
+
+  useEffect(() => {
+    if (!selectedPayrollId) return;
+    adminFetch(`/api/admin/payrolls/${selectedPayrollId}`).then(r => r.json()).then(data => {
+      const payrollItems = data.items || data.payroll?.items || [];
+      setItems(payrollItems);
+      const initialCheques = {};
+      const initialConfirmed = {};
+      payrollItems.forEach(item => {
+        initialCheques[item.id] = item.payment_reference || "";
+        if (item.payment_reference) initialConfirmed[item.id] = true;
+      });
+      setChequeInputs(initialCheques);
+      setConfirmedCheques(initialConfirmed);
+      setSelectedItems({});
+    });
+  }, [selectedPayrollId, adminFetch]);
+
+  const handleSaveAll = async () => {
+    try {
+      const itemsToSave = items.map(item => ({
+        id: item.id,
+        payment_reference: chequeInputs[item.id] || "",
+        send_status: item.send_status === "sent"
+          ? "sent"
+          : chequeInputs[item.id] ? "ready" : "pending",
+      }));
+      const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: itemsToSave }),
+      });
+      if (r.ok) {
+        const newConfirmed = {};
+        itemsToSave.forEach(i => { if (i.payment_reference) newConfirmed[i.id] = true; });
+        setConfirmedCheques(newConfirmed);
+        setItems(prev => prev.map(i => {
+          const saved = itemsToSave.find(s => s.id === i.id);
+          return saved && i.send_status !== "sent" ? { ...i, send_status: saved.send_status } : i;
+        }));
+        setFeedback("Saved successfully.");
+        setTimeout(() => setFeedback(""), 3000);
+      } else {
+        const d = await r.json();
+        setError(d.error || "Save failed.");
+      }
+    } catch (e) { setError(e.message); }
+  };
+
+  const executeSend = async (toSend) => {
+    setConfirmModal(null);
+    for (const item of toSend) {
+      setSending(s => ({ ...s, [item.id]: true }));
+      try {
+        const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items/${item.id}/send`, { method: "POST" });
+        if (r.ok) {
+          setItems(prev => prev.map(i => i.id === item.id ? { ...i, send_status: "sent" } : i));
+        } else {
+          const d = await r.json();
+          setError(d.error || "Send failed.");
+        }
+      } catch (e) { setError(e.message); }
+      setSending(s => ({ ...s, [item.id]: false }));
+    }
+    setFeedback("Emails sent.");
+    setTimeout(() => setFeedback(""), 3000);
+  };
+
+  const handleSendSelected = () => {
+    const toSend = items.filter(item => selectedItems[item.id] && item.employee_email);
+    if (toSend.length === 0) { setError("No employees selected or no emails registered."); return; }
+    setConfirmModal({ mode: "bulk", toSend });
+  };
+
+  const handleViewPayslip = async (itemId) => {
+    try {
+      const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items/${itemId}/payslip`);
+      if (r.ok) { const data = await r.json(); setPreviewPayslip(data); }
+    } catch (_) {}
+  };
+
+  const handleExportReview = async () => {
+    if (!selectedPayrollId) return;
+    try {
+      const response = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/export`);
+      if (!response.ok) throw new Error("Failed to export payroll.");
+      const workbookBlob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(workbookBlob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `payroll-${selectedPayrollId}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (exportError) {
+      setError(exportError.message || "Failed to export payroll.");
+    }
+  };
+
+  const sentCount = items.filter(i => i.send_status === "sent").length;
+  const selectedCount = Object.values(selectedItems).filter(Boolean).length;
+  const allSelected = items.length > 0 && items.every(i => selectedItems[i.id]);
+
+  const approvedPayrolls = (payrolls || []).filter(p => p.status === "approved");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      {feedback && <div className="admin-alert admin-alert--success">{feedback}</div>}
+      {error && <div className="admin-alert admin-alert--error">{error}</div>}
+
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: items.length > 0 ? "1.25rem" : 0 }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">Pay &amp; Send</h2>
+            {selectedPayroll && (
+              <span className="admin-team-header__count">
+                {selectedPayroll.start_date} to {selectedPayroll.end_date} - {items.length} employee{items.length !== 1 ? "s" : ""} - {sentCount} sent
+              </span>
+            )}
+          </div>
+          <div className="admin-team-toolbar__right">
+            <select className="admin-select" value={selectedPayrollId} onChange={e => setSelectedPayrollId(e.target.value)} style={{ minWidth: 220 }}>
+              <option value="">— Select payroll period —</option>
+              {approvedPayrolls.map(p => (
+                <option key={p.id} value={p.id}>{p.start_date} to {p.end_date}</option>
+              ))}
+            </select>
+            {items.length > 0 && (
+              <>
+                <button className="admin-button admin-button--secondary admin-button--compact" onClick={handleExportReview}>Export Excel</button>
+                <button className="admin-button admin-button--secondary admin-button--compact" onClick={handleSaveAll}>Save all</button>
+                <button className="admin-button admin-button--primary admin-button--compact" onClick={handleSendSelected} disabled={selectedCount === 0}>
+                  Send selected ({selectedCount})
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {items.length > 0 && (
+          <div className="emp-table-wrap">
+            <table className="emp-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 36 }}>
+                    <input type="checkbox" checked={allSelected} onChange={e => {
+                      const next = {};
+                      items.forEach(i => { if (i.employee_email) next[i.id] = e.target.checked; });
+                      setSelectedItems(next);
+                    }} />
+                  </th>
+                  <th>Employee</th>
+                  <th style={{ textAlign: "right" }}>Hours</th>
+                  <th style={{ textAlign: "right" }}>Gross</th>
+                  <th style={{ textAlign: "right" }}>Net pay</th>
+                  <th>Cheque No.</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map(item => {
+                  const hasEmail = !!item.employee_email;
+                  const chequeVal = chequeInputs[item.id] || "";
+                  const isConfirmed = confirmedCheques[item.id];
+                  const isEditing = editingCheques[item.id];
+                  const statusBadge = {
+                    sent: <span className="cr-type-badge cr-type-badge--in">Sent</span>,
+                    ready: <span className="cr-type-badge cr-type-badge--manual">Ready</span>,
+                    pending: <span style={{ fontSize: "0.75rem", color: "var(--c-text-muted)" }}>Pending</span>,
+                  }[item.send_status] || null;
+                  const rateLabel = item.pay_type === "salaried"
+                    ? "Monthly Salary"
+                    : item.hourly_rate != null
+                      ? `$${Number(item.hourly_rate || 0).toFixed(2)}/hr`
+                      : "";
+
+                  return [
+                    <tr key={item.id} className="emp-table__row" style={{ opacity: hasEmail ? 1 : 0.6 }}>
+                      <td>
+                        <input type="checkbox" checked={!!selectedItems[item.id]} disabled={!hasEmail}
+                          onChange={e => setSelectedItems(s => ({ ...s, [item.id]: e.target.checked }))} />
+                      </td>
+                      <td>
+                        <div className="emp-table__name-cell">
+                          <div className="emp-table__avatar">{(item.employee_name || "?")[0].toUpperCase()}</div>
+                          <div className="emp-table__name-stack">
+                            <span className="emp-table__name">{item.employee_name}</span>
+                            <span className="emp-table__email" style={{ fontStyle: hasEmail ? "normal" : "italic" }}>
+                              {item.employee_email || "No email registered"}
+                            </span>
+                            {rateLabel ? <span className="emp-table__email">{rateLabel}</span> : null}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="emp-table__data" style={{ textAlign: "right" }}>
+                        {item.pay_type === "salaried" ? "Monthly Salary" : Number(item.total_hours || 0).toFixed(2)}
+                      </td>
+                      <td className="emp-table__data" style={{ textAlign: "right" }}>${Number(item.gross_pay || 0).toFixed(2)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700, color: "var(--c-text-primary)" }}>${Number(item.net_pay || 0).toFixed(2)}</td>
+                      <td>
+                        {isConfirmed && !isEditing ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <span style={{ fontWeight: 600, color: "var(--c-jade)" }}>No. {chequeVal}</span>
+                            <button className="cr-action-btn" onClick={() => setEditingCheques(s => ({ ...s, [item.id]: true }))}>Edit</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <input
+                              className="admin-input"
+                              style={{ width: 90, padding: "0.3rem 0.5rem", fontSize: "0.85rem" }}
+                              placeholder="No."
+                              value={chequeVal}
+                              onChange={e => setChequeInputs(s => ({ ...s, [item.id]: e.target.value }))}
+                            />
+                            <button className="cr-action-btn" onClick={() => {
+                              if (chequeVal) { setConfirmedCheques(s => ({ ...s, [item.id]: true })); setEditingCheques(s => ({ ...s, [item.id]: false })); }
+                            }}>Confirm</button>
+                          </div>
+                        )}
+                      </td>
+                      <td>{statusBadge}</td>
+                      <td className="emp-table__actions-cell">
+                        <button className="admin-employee-card-btn" onClick={() => handleViewPayslip(item.id)}>Preview</button>
+                        {hasEmail && item.send_status !== "sent" && (
+                          <button className="admin-employee-card-btn" style={{ marginLeft: 4 }} disabled={!!sending[item.id]}
+                            onClick={() => setConfirmModal({ mode: "single", toSend: [item] })}>
+                            {sending[item.id] ? "..." : "Send"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>,
+                    previewPayslip && previewPayslip.employee_name === item.employee_name ? (
+                      <tr key={`preview-${item.id}`} className="emp-detail-row">
+                        <td colSpan={8} className="emp-detail-cell">
+                          <div className="admin-employee-inline-detail">
+                            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.75rem" }}>
+                              <button className="admin-employee-card-btn admin-employee-card-btn--close" onClick={() => setPreviewPayslip(null)}>Close preview</button>
+                            </div>
+                            {typeof buildPayslipPrintHtml === "function" && (
+                              <div dangerouslySetInnerHTML={{ __html: buildPayslipPrintHtml(previewPayslip) }} />
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null
+                  ];
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!selectedPayrollId && (
+          <div style={{ textAlign: "center", padding: "3rem 1rem", color: "var(--c-text-muted)" }}>
+            Select an approved payroll period above to review and send payslips.
+          </div>
+        )}
+      </div>
+
+      {confirmModal && (
+        <div className="admin-modal-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="admin-modal" onClick={e => e.stopPropagation()}>
+            <h3 className="admin-modal__title">Confirm send</h3>
+            <p className="admin-modal__subtitle">
+              {confirmModal.toSend.length === 1
+                ? "The following payslip will be emailed:"
+                : `${confirmModal.toSend.length} payslips will be emailed:`}
+            </p>
+            <div className="admin-modal__list">
+              {confirmModal.toSend.map(item => {
+                const cheque = chequeInputs[item.id] || item.payment_reference || "";
+                const missingCheque = !cheque;
+                return (
+                  <div key={item.id} className="admin-modal__list-item">
+                    <div className="admin-modal__list-name">{item.employee_name}</div>
+                    <div className="admin-modal__list-detail">{item.employee_email}</div>
+                    {selectedPayroll && (
+                      <div className="admin-modal__list-detail">{selectedPayroll.start_date} to {selectedPayroll.end_date}</div>
+                    )}
+                    {missingCheque
+                      ? <div className="admin-modal__list-warn">Cheque number missing — send anyway?</div>
+                      : <div className="admin-modal__list-detail">Cheque No. {cheque}</div>
+                    }
+                  </div>
+                );
+              })}
+            </div>
+            <div className="admin-modal__actions">
+              <button className="admin-button admin-button--secondary admin-button--compact" onClick={() => setConfirmModal(null)}>Cancel</button>
+              <button className="admin-button admin-button--primary admin-button--compact" onClick={() => executeSend(confirmModal.toSend)}>Send</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessagesView({ adminFetch, employees }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [bccSelf, setBccSelf] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [draftStatus, setDraftStatus] = useState("");
+  const [sentHistory, setSentHistory] = useState([]);
+
+  const employeesWithEmail = (employees || []).filter(e => e.email && e.active !== 0);
+  const allSelected = employeesWithEmail.length > 0 && employeesWithEmail.every(e => selectedIds.includes(e.id));
+
+  useEffect(() => {
+    try {
+      const savedDraft = JSON.parse(window.localStorage.getItem("admin-message-draft") || "null");
+      if (savedDraft) {
+        setSubject(savedDraft.subject || "");
+        setBody(savedDraft.body || "");
+        setBccSelf(savedDraft.bccSelf !== false);
+      }
+    } catch (_) {}
+  }, []);
+
+  const toggleAll = () => {
+    if (allSelected) setSelectedIds([]);
+    else setSelectedIds(employeesWithEmail.map(e => e.id));
+  };
+
+  const toggleOne = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleSend = async () => {
+    if (!selectedIds.length) return setError("Select at least one recipient.");
+    if (!subject.trim()) return setError("Subject is required.");
+    if (!body.trim()) return setError("Message body is required.");
+    setSending(true);
+    setError("");
+    setResult(null);
+    try {
+      const r = await adminFetch("/api/admin/messages/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipientIds: selectedIds, subject, body, bccSelf }),
+      });
+      const data = await r.json();
+      if (!r.ok) setError(data.error || "Send failed.");
+      else {
+        setResult(data);
+        setSentHistory((current) => [
+          {
+            id: Date.now(),
+            subject,
+            recipients: selectedIds.length,
+            sent: data.sent,
+            failed: data.failed,
+            sentAt: new Date().toISOString(),
+          },
+          ...current,
+        ]);
+        window.localStorage.removeItem("admin-message-draft");
+        setSubject("");
+        setBody("");
+        setSelectedIds([]);
+      }
+    } catch (e) { setError(e.message); }
+    setSending(false);
+  };
+
+  const handleSaveDraft = () => {
+    window.localStorage.setItem(
+      "admin-message-draft",
+      JSON.stringify({ subject, body, bccSelf, updatedAt: new Date().toISOString() }),
+    );
+    setDraftStatus("Draft saved.");
+    setTimeout(() => setDraftStatus(""), 3000);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      {error && <div className="admin-alert admin-alert--error">{error}</div>}
+      {draftStatus && <div className="admin-alert admin-alert--success">{draftStatus}</div>}
+      {result && (
+        <div className="admin-alert admin-alert--success">
+          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` · ${result.failed} failed` : ""}.
+        </div>
+      )}
+
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: "1.25rem" }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">New Message</h2>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "1.5rem", alignItems: "start" }}>
+          {/* Recipients */}
+          <div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-text-muted)", marginBottom: "0.6rem" }}>
+              Recipients
+            </div>
+            <div className="cr-emp-chips">
+              <div
+                className={`cr-emp-chip ${allSelected ? "cr-emp-chip--active" : ""}`}
+                onClick={toggleAll}
+              >
+                <input type="checkbox" readOnly checked={allSelected} style={{ pointerEvents: "none" }} />
+                <span className="cr-emp-chip__name">Select all ({employeesWithEmail.length})</span>
+              </div>
+              {employeesWithEmail.map(e => (
+                <div
+                  key={e.id}
+                  className={`cr-emp-chip ${selectedIds.includes(e.id) ? "cr-emp-chip--active" : ""}`}
+                  onClick={() => toggleOne(e.id)}
+                >
+                  <input type="checkbox" readOnly checked={selectedIds.includes(e.id)} style={{ pointerEvents: "none" }} />
+                  <div>
+                    <div className="cr-emp-chip__name">{e.name}</div>
+                    <div className="cr-emp-chip__hours">{e.email}</div>
+                  </div>
+                </div>
+              ))}
+              {employeesWithEmail.length === 0 && (
+                <div style={{ padding: "0.75rem", fontSize: "0.8rem", color: "var(--c-text-muted)", textAlign: "center" }}>
+                  No employees with email registered.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Message */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <label className="admin-field">
+              <span className="admin-field__label">Subject</span>
+              <input className="admin-input" value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Schedule update for next week" />
+            </label>
+
+            <label className="admin-field">
+              <span className="admin-field__label">Message</span>
+              <textarea className="admin-input admin-textarea" rows={8} value={body} onChange={e => setBody(e.target.value)} placeholder="Write your message here..." />
+            </label>
+
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={bccSelf} onChange={e => setBccSelf(e.target.checked)} />
+              <span style={{ fontSize: "0.85rem", color: "var(--c-text-secondary)" }}>BCC me on this message</span>
+            </label>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <button
+                className="admin-button admin-button--secondary"
+                onClick={handleSaveDraft}
+                disabled={!subject.trim() && !body.trim()}
+              >
+                Save draft
+              </button>
+              <button
+                className="admin-button admin-button--primary"
+                onClick={handleSend}
+                disabled={sending || selectedIds.length === 0}
+              >
+                {sending ? "Sending..." : `Send to ${selectedIds.length} recipient${selectedIds.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="admin-panel">
+        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
+          <div className="admin-team-toolbar__left">
+            <h2 className="admin-panel__title">Sent History</h2>
+          </div>
+        </div>
+        {sentHistory.length === 0 ? (
+          <div className="admin-empty-state">No messages sent in this session.</div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-data-table">
+              <thead>
+                <tr className="admin-data-table__header-row">
+                  <th>When</th>
+                  <th>Subject</th>
+                  <th>Recipients</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sentHistory.map((message) => (
+                  <tr key={message.id}>
+                    <td>{formatDateTime(message.sentAt)}</td>
+                    <td>{message.subject}</td>
+                    <td>{message.recipients}</td>
+                    <td>{message.sent} sent{message.failed ? `, ${message.failed} failed` : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdminView() {
   const [adminToken, setAdminToken] = useState(getStoredAdminToken());
   const [authStatus, setAuthStatus] = useState("checking");
-  const [loginForm, setLoginForm] = useState({ username: "admin", password: "admin123" });
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [adminUser, setAdminUser] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [adminEmployees, setAdminEmployees] = useState([]);
   const [recordsResponse, setRecordsResponse] = useState({
@@ -665,6 +1587,7 @@ function AdminView() {
   const [summary, setSummary] = useState(initialSummaryState);
   const [adminConfig, setAdminConfig] = useState(null);
   const [filters, setFilters] = useState({ employeeId: "", start: "", end: "", recordStatus: "active" });
+  const [openOnly, setOpenOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [formMode, setFormMode] = useState("create");
@@ -683,6 +1606,11 @@ function AdminView() {
   const [isGeneratingPayroll, setIsGeneratingPayroll] = useState(false);
   const [payrollConfig, setPayrollConfig] = useState(null);
   const [payrollHolidayInputs, setPayrollHolidayInputs] = useState({});
+  const [salariedBonusInputs, setSalariedBonusInputs] = useState({});
+  const [expandedEmployeeDetails, setExpandedEmployeeDetails] = useState({});
+  const [showClockForm, setShowClockForm] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
   const [payrollForm, setPayrollForm] = useState({
     startDate: "",
     endDate: "",
@@ -708,9 +1636,16 @@ function AdminView() {
   const [payrollAuditFilters, setPayrollAuditFilters] = useState({ employeeId: "", action: "", start: "", end: "", page: 1, pageSize: DEFAULT_PAGE_SIZE });
   const [activeSection, setActiveSection] = useState("employees");
   const [activeAuditSection, setActiveAuditSection] = useState("time_record");
+  const [clockStats, setClockStats] = useState({ currentlyWorking: 0, allOpen: 0, lastEvent: null });
+  const [liveTime, setLiveTime] = useState(new Date());
   const [selectedPayslip, setSelectedPayslip] = useState(null);
   const [isPayslipLoading, setIsPayslipLoading] = useState(false);
   const [expandedPayrollItemId, setExpandedPayrollItemId] = useState(null);
+
+  useEffect(() => {
+    document.body.classList.add("admin-bg");
+    return () => document.body.classList.remove("admin-bg");
+  }, []);
 
   const adminFetch = useCallback(
     async (url, options = {}) => {
@@ -750,6 +1685,8 @@ function AdminView() {
           throw new Error("Invalid session.");
         }
 
+        const sessionData = await response.json();
+        if (sessionData.user) setAdminUser(sessionData.user);
         setAuthStatus("authenticated");
       } catch {
         clearStoredAdminToken();
@@ -770,8 +1707,9 @@ function AdminView() {
     setError("");
 
     try {
-      const filterQuery = buildQueryString(filters);
-      const paginatedQuery = buildQueryString(filters, { page, pageSize });
+      const effectiveFilters = openOnly ? { ...filters, open_only: true } : filters;
+      const filterQuery = buildQueryString(effectiveFilters);
+      const paginatedQuery = buildQueryString(effectiveFilters, { page, pageSize });
       const employeeAuditQuery = buildAuditQueryString(
         employeeAuditFilters,
         { page: employeeAuditFilters.page, pageSize: employeeAuditFilters.pageSize },
@@ -865,6 +1803,20 @@ function AdminView() {
               name: employee.name,
               pin: "",
               active: Boolean(employee.active),
+              pay_type: employee.pay_type || "hourly",
+              annual_salary: employee.annual_salary != null ? String(employee.annual_salary) : "",
+              vacation_pay_pct: employee.vacation_pay_pct != null ? employee.vacation_pay_pct : 4,
+              phone: employee.phone ?? "",
+              email: employee.email ?? "",
+              sin: employee.sin ?? "",
+              home_address: employee.home_address ?? "",
+              hire_date: employee.hire_date ?? "",
+              proserve_number: employee.proserve_number ?? "",
+              proserve_expiry: employee.proserve_expiry ?? "",
+              roe_last_day: employee.roe_last_day ?? "",
+              roe_hours: employee.roe_hours ?? "",
+              roe_wage: employee.roe_wage ?? "",
+              benefits_note: employee.benefits_note ?? "",
             },
           ]),
         ),
@@ -899,6 +1851,38 @@ function AdminView() {
     }
   }, [authStatus, loadAdminData]);
 
+  // URL hash persistence
+  useEffect(() => {
+    const validSections = ["employees", "time-records", "payroll", "audit-logs", "payroll-review", "messages", "settings"];
+    const hash = window.location.hash.replace("#", "");
+    if (validSections.includes(hash)) setActiveSection(hash);
+  }, []);
+
+  useEffect(() => {
+    window.location.hash = activeSection;
+  }, [activeSection]);
+
+  // Live clock
+  useEffect(() => {
+    const interval = setInterval(() => setLiveTime(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Clock stats polling
+  const loadClockStats = useCallback(async () => {
+    try {
+      const res = await adminFetch("/api/admin/clock-stats");
+      if (res.ok) { const data = await res.json(); setClockStats(data); }
+    } catch (_) {}
+  }, [adminFetch]);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    loadClockStats();
+    const interval = setInterval(loadClockStats, 30000);
+    return () => clearInterval(interval);
+  }, [authStatus, loadClockStats]);
+
   const resetForm = () => {
     setFormMode("create");
     setEditingRecordId(null);
@@ -920,7 +1904,7 @@ function AdminView() {
       const response = await fetch(`${API_BASE_URL}/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(loginForm),
+        body: JSON.stringify({ email: loginForm.email, password: loginForm.password }),
       });
       const data = await response.json();
 
@@ -930,6 +1914,7 @@ function AdminView() {
 
       setStoredAdminToken(data.token);
       setAdminToken(data.token);
+      if (data.user) setAdminUser(data.user);
       setAuthStatus("authenticated");
       setFeedback("Signed in successfully.");
       setError("");
@@ -1136,7 +2121,7 @@ function AdminView() {
   const handleExport = async () => {
     setError("");
     try {
-      const response = await adminFetch(`${API_BASE_URL}/admin/time-records/export${buildQueryString(filters)}`);
+      const response = await adminFetch(`${API_BASE_URL}/admin/time-records/export${buildQueryString(openOnly ? { ...filters, open_only: true } : filters)}`);
       if (!response.ok) throw new Error("Failed to export CSV.");
       const csvBlob = await response.blob();
       const objectUrl = window.URL.createObjectURL(csvBlob);
@@ -1285,16 +2270,36 @@ function AdminView() {
     }
   };
 
+  const handleSalariedBonusSave = async (payrollId, itemId) => {
+    setError("");
+    setFeedback("");
+    try {
+      const bonus = Number(salariedBonusInputs[itemId] ?? 0);
+      const response = await adminFetch(`${API_BASE_URL}/admin/payrolls/${payrollId}/items/${itemId}/salary-bonus`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bonus }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to update bonus.");
+      setFeedback("Bonus updated successfully.");
+      setSelectedPayroll(data);
+      await loadAdminData();
+    } catch (bonusError) {
+      setError(bonusError.message || "Failed to update bonus.");
+    }
+  };
+
   const handleExportPayroll = async (payrollId) => {
     setError("");
     try {
       const response = await adminFetch(`${API_BASE_URL}/admin/payrolls/${payrollId}/export`);
       if (!response.ok) throw new Error("Failed to export payroll.");
-      const csvBlob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(csvBlob);
+      const workbookBlob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(workbookBlob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = `payroll-${payrollId}.csv`;
+      link.download = `payroll-${payrollId}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -1392,12 +2397,13 @@ function AdminView() {
     setFeedback("");
     try {
       const draft = employeeSettingsDrafts[employeeId] || {};
+      const isSalariedDraft = draft.pay_type === "salaried";
 
-      if (draft.defaultHourlyRate === "" || Number(draft.defaultHourlyRate) <= 0) {
+      if (!isSalariedDraft && (draft.defaultHourlyRate === "" || Number(draft.defaultHourlyRate) <= 0)) {
         throw new Error("Hourly rate is required and must be greater than zero.");
       }
 
-      if (!draft.defaultPayFrequency) {
+      if (!isSalariedDraft && !draft.defaultPayFrequency) {
         throw new Error("Pay frequency is required.");
       }
 
@@ -1408,10 +2414,24 @@ function AdminView() {
           name: draft.name,
           ...(draft.pin?.trim() ? { pin: draft.pin.trim() } : {}),
           active: draft.active,
-          default_hourly_rate: draft.defaultHourlyRate,
-          default_pay_frequency: draft.defaultPayFrequency,
+          default_hourly_rate: isSalariedDraft ? null : draft.defaultHourlyRate,
+          default_pay_frequency: isSalariedDraft ? null : draft.defaultPayFrequency,
           start_date: draft.startDate,
           vacation_pay_schedule: draft.vacationPaySchedule,
+          pay_type: draft.pay_type || "hourly",
+          annual_salary: isSalariedDraft ? (draft.annual_salary ? Number(draft.annual_salary) : null) : null,
+          vacation_pay_pct: isSalariedDraft ? getVacationPayPercentForStartDate(draft.startDate) : undefined,
+          phone: draft.phone || null,
+          email: draft.email || null,
+          sin: draft.sin || null,
+          home_address: draft.home_address || null,
+          hire_date: draft.hire_date || null,
+          proserve_number: draft.proserve_number || null,
+          proserve_expiry: draft.proserve_expiry || null,
+          roe_last_day: draft.roe_last_day || null,
+          roe_hours: draft.roe_hours ? Number(draft.roe_hours) : null,
+          roe_wage: draft.roe_wage ? Number(draft.roe_wage) : null,
+          benefits_note: draft.benefits_note || null,
         }),
       });
       const data = await response.json();
@@ -1428,11 +2448,13 @@ function AdminView() {
     setError("");
     setFeedback("");
     try {
-      if (employeeCreateForm.defaultHourlyRate === "" || Number(employeeCreateForm.defaultHourlyRate) <= 0) {
+      const isSalariedCreate = employeeCreateForm.pay_type === "salaried";
+
+      if (!isSalariedCreate && (employeeCreateForm.defaultHourlyRate === "" || Number(employeeCreateForm.defaultHourlyRate) <= 0)) {
         throw new Error("Hourly rate is required and must be greater than zero.");
       }
 
-      if (!employeeCreateForm.defaultPayFrequency) {
+      if (!isSalariedCreate && !employeeCreateForm.defaultPayFrequency) {
         throw new Error("Pay frequency is required.");
       }
 
@@ -1443,10 +2465,13 @@ function AdminView() {
           name: employeeCreateForm.name,
           pin: employeeCreateForm.pin,
           active: employeeCreateForm.active,
-          default_hourly_rate: employeeCreateForm.defaultHourlyRate,
-          default_pay_frequency: employeeCreateForm.defaultPayFrequency,
+          default_hourly_rate: isSalariedCreate ? null : employeeCreateForm.defaultHourlyRate,
+          default_pay_frequency: isSalariedCreate ? null : employeeCreateForm.defaultPayFrequency,
           start_date: employeeCreateForm.startDate,
           vacation_pay_schedule: employeeCreateForm.vacationPaySchedule,
+          pay_type: employeeCreateForm.pay_type || "hourly",
+          annual_salary: isSalariedCreate ? (employeeCreateForm.annual_salary ? Number(employeeCreateForm.annual_salary) : null) : null,
+          vacation_pay_pct: getVacationPayPercentForStartDate(employeeCreateForm.startDate),
         }),
       });
       const data = await response.json();
@@ -1526,10 +2551,13 @@ function AdminView() {
     }
   }, [filteredAdminEmployees, selectedEmployeeId]);
   const sectionTabs = [
-    { id: "employees", label: "Employees", kicker: "People" },
-    { id: "time-records", label: "Time Records", kicker: "Operations" },
+    { id: "employees", label: "Team", kicker: "People" },
+    { id: "time-records", label: "Clock", kicker: "Time" },
     { id: "payroll", label: "Payroll", kicker: "Finance" },
-    { id: "audit-logs", label: "Audit Logs", kicker: "Traceability" },
+    { id: "payroll-review", label: "Pay & Send", kicker: "Review" },
+    { id: "messages", label: "Messages", kicker: "Staff" },
+    { id: "audit-logs", label: "Audit Log", kicker: "History" },
+    { id: "settings", label: "Settings", kicker: "Config" },
   ];
   const auditTabs = [
     { id: "employee", label: "Employees", kicker: "Audit" },
@@ -1540,9 +2568,9 @@ function AdminView() {
   if (authStatus !== "authenticated") {
     return (
       <LoginView
-        username={loginForm.username}
+        email={loginForm.email}
         password={loginForm.password}
-        onUsernameChange={(value) => setLoginForm((current) => ({ ...current, username: value }))}
+        onEmailChange={(value) => setLoginForm((current) => ({ ...current, email: value }))}
         onPasswordChange={(value) => setLoginForm((current) => ({ ...current, password: value }))}
         onSubmit={handleLogin}
         error={error}
@@ -1551,65 +2579,263 @@ function AdminView() {
     );
   }
 
+  const tabIcons = {
+    "employees":      <UsersRound size={20} strokeWidth={1.8} />,
+    "time-records":   <Clock size={20} strokeWidth={1.8} />,
+    "payroll":        <StickyNote size={20} strokeWidth={1.8} />,
+    "payroll-review": <SendHorizontal size={20} strokeWidth={1.8} />,
+    "messages":       <Mail size={20} strokeWidth={1.8} />,
+    "audit-logs":     <History size={20} strokeWidth={1.8} />,
+    "settings":       <Settings2 size={20} strokeWidth={1.8} />,
+  };
+
   return (
-    <div className="admin-shell">
-      <div className="admin-container">
-        <div className="admin-hero rounded-[32px] border border-stone-200 bg-white p-8 shadow-sm">
-          <div className="admin-hero__row flex items-start justify-between gap-6">
-            <div className="admin-brand">
-              <img src="/logo.png" alt="Sushi House Banff logo" className="admin-brand__logo" />
-              <div className="admin-hero__content max-w-3xl">
-                <div className="admin-eyebrow text-xs font-semibold uppercase tracking-[0.3em] text-stone-400">Administration</div>
-                <h1 className="admin-hero__title mt-3 text-4xl font-bold tracking-tight">Sushi House Banff</h1>
-                <p className="admin-hero__subtitle mt-3 text-base leading-7 text-stone-600">
-                  Time tracking, payroll, and audit management for the restaurant team.
-                </p>
+    <div className="ds-shell">
+      <div className="admin-blobs" aria-hidden="true">
+        <div className="admin-blob admin-blob-1" />
+        <div className="admin-blob admin-blob-2" />
+        <div className="admin-blob admin-blob-3" />
+        <div className="admin-blob admin-blob-4" />
+        <div className="admin-blob admin-blob-5" />
+      </div>
+      <aside className="ds-sidebar">
+        <button
+          className="ds-sidebar__brand"
+          onClick={handleBackToKiosk}
+        >
+          <img src="/logo.png" alt="" className="ds-sidebar__logo" />
+          <div className="ds-sidebar__brand-name">Sushi House Banff</div>
+        </button>
+        <nav className="ds-sidebar__nav">
+          {sectionTabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`ds-nav-btn ${activeSection === tab.id ? "is-active" : ""}`}
+              onClick={() => setActiveSection(tab.id)}
+            >
+              <span className="ds-nav-btn__icon">{tabIcons[tab.id]}</span>
+              <span className="ds-nav-btn__label">{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="ds-sidebar__footer">
+          <a href="/" className="ds-sidebar__kiosk-link">
+            <ArrowLeft size={14} strokeWidth={1.8} />
+            <span>Kiosk</span>
+          </a>
+          <button onClick={handleLogout} className="ds-sidebar__logout">
+            <LogOut size={14} strokeWidth={1.8} />
+            <span>Sign out</span>
+          </button>
+        </div>
+      </aside>
+      <main className="ds-main">
+        {/* Welcome bar */}
+        {(() => {
+          const todayStr = liveTime.toLocaleDateString("en-CA", { timeZone: TZ });
+          const currentPeriod = payrollPeriods.find(
+            (p) => p.start_date <= todayStr && p.end_date >= todayStr
+          ) || payrollPeriods[payrollPeriods.length - 1];
+          const payPeriodLabel = currentPeriod
+            ? new Date(currentPeriod.start_date + "T12:00:00").toLocaleDateString("en-CA", { month: "long", year: "numeric" }) + " pay period"
+            : liveTime.toLocaleDateString("en-CA", { timeZone: TZ, month: "long", year: "numeric" }) + " pay period";
+          return (
+            <div className="ds-welcome-bar">
+              <span className="ds-welcome-bar__greeting">
+                Welcome, {adminUser?.name?.split(" ")[0] || "Admin"}
+              </span>
+              <span className="ds-welcome-bar__sep" />
+              <span className="ds-welcome-bar__date">
+                {liveTime.toLocaleDateString("en-CA", { timeZone: TZ, weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+              </span>
+              <span className="ds-welcome-bar__sep" />
+              <span className="ds-welcome-bar__period">{payPeriodLabel}</span>
+              <span className="ds-live-badge">
+                <span className="ds-metric-live-dot" />
+                Live
+              </span>
+              <span className="ds-welcome-bar__time">
+                {liveTime.toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })}
+              </span>
+            </div>
+          );
+        })()}
+
+        {/* Metric strip - per section */}
+        {(() => {
+          const activeCount = adminEmployees.filter(e => e.active).length;
+          const totalHours = summary.totals.payroll_ready_hours || 0;
+          const totalRecords = summary.totals.total_records || 0;
+          const proserveAlerts = adminEmployees.filter(e => {
+            const s = proserveStatus(e.proserve_expiry);
+            return s === "expired" || s === "expiring";
+          }).length;
+
+          if (activeSection === "time-records") {
+            return (
+              <div className="ds-metric-strip">
+                <div className="ds-metric-card ds-metric-card--primary ds-metric-card--clickable" onClick={() => setActiveSection("time-records")}>
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon">
+                      <span className="ds-metric-live-dot" />
+                    </div>
+                    <span className="ds-metric-card__tag">live</span>
+                  </div>
+                  <div className="ds-metric-card__number">{clockStats.currentlyWorking}</div>
+                  <div className="ds-metric-card__label">Currently working →</div>
+                  <UsersRound className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(255,255,255,0.07)" }} />
+                </div>
+
+                <div className="ds-metric-card ds-metric-card--warm ds-metric-card--clickable">
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon">
+                      {clockStats.allOpen > 0 ? <TriangleAlert size={16} strokeWidth={1.8} /> : <CheckCircle size={16} strokeWidth={1.8} />}
+                    </div>
+                    <span className="ds-metric-card__tag">{clockStats.allOpen > 0 ? "needs review" : "all matched"}</span>
+                  </div>
+                  <div className="ds-metric-card__number">{clockStats.allOpen}</div>
+                  <div className="ds-metric-card__label">Open check-ins →</div>
+                  <TriangleAlert className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(200,160,0,0.08)" }} />
+                </div>
+
+                <div className="ds-metric-card ds-metric-card--clickable">
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon"><Clock size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">recent</span>
+                  </div>
+                  <div className="ds-metric-card__number ds-metric-card__value--sm">
+                    {clockStats.lastEvent
+                      ? new Date(clockStats.lastEvent.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
+                      : "—"}
+                  </div>
+                  <div className="ds-metric-card__label">
+                    {clockStats.lastEvent
+                      ? `${clockStats.lastEvent.employee_name} · ${clockStats.lastEvent.entry_type === "check-in" ? "check-in" : "check-out"} →`
+                      : "No events yet"}
+                  </div>
+                  <Clock className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(200,168,112,0.10)" }} />
+                </div>
+
+                {(() => {
+                  const now = new Date();
+                  const day = Number(now.toLocaleDateString("en-CA", { timeZone: TZ, day: "numeric" }));
+                  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                  const monthLabel = now.toLocaleDateString("en-CA", { timeZone: TZ, month: "long", year: "numeric" });
+                  const pct = Math.round((day / daysInMonth) * 100);
+                  return (
+                    <div className="ds-metric-card ds-metric-card--clickable" onClick={() => setActiveSection("payroll")}>
+                      <div className="ds-metric-card__top">
+                        <div className="ds-metric-card__icon"><Calendar size={16} strokeWidth={1.8} /></div>
+                        <span className="ds-metric-card__tag">Day {day}/{daysInMonth}</span>
+                      </div>
+                      <div className="ds-metric-card__number ds-metric-card__value--sm">{monthLabel}</div>
+                      <div className="ds-metric-progress-wrap">
+                        <div className="ds-metric-progress-bar" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="ds-metric-card__label">Current pay period →</div>
+                      <Calendar className="ds-metric-card__deco" size={80} strokeWidth={1.5} style={{ color: "rgba(138,128,120,0.08)" }} />
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          }
+
+          if (activeSection === "employees") {
+            const expiredCount = adminEmployees.filter(e => proserveStatus(e.proserve_expiry) === "expired").length;
+            const expiringCount = adminEmployees.filter(e => proserveStatus(e.proserve_expiry) === "expiring").length;
+            const now = new Date();
+            const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+            const newThisMonth = adminEmployees.filter(e => e.start_date && e.start_date >= thisMonthStart).length;
+            return (
+              <div className="ds-metric-strip">
+                <div className="ds-metric-card ds-metric-card--primary">
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon"><UsersRound size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">active</span>
+                  </div>
+                  <div className="ds-metric-card__number">{activeCount}</div>
+                  <div className="ds-metric-card__label">Team members</div>
+                </div>
+                <div className={`ds-metric-card ${expiredCount > 0 ? "ds-metric-card--warn" : ""}`}>
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">{expiredCount > 0 ? "expired" : "ok"}</span>
+                  </div>
+                  <div className="ds-metric-card__number">{expiredCount}</div>
+                  <div className="ds-metric-card__label">ProServe expired</div>
+                </div>
+                <div className={`ds-metric-card ${expiringCount > 0 ? "ds-metric-card--warn" : ""}`}>
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon"><Hourglass size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">{expiringCount > 0 ? "soon" : "ok"}</span>
+                  </div>
+                  <div className="ds-metric-card__number">{expiringCount}</div>
+                  <div className="ds-metric-card__label">Expiring in 30 days</div>
+                </div>
+                <div className="ds-metric-card">
+                  <div className="ds-metric-card__top">
+                    <div className="ds-metric-card__icon"><UserPlus size={16} strokeWidth={1.8} /></div>
+                    <span className="ds-metric-card__tag">this month</span>
+                  </div>
+                  <div className="ds-metric-card__number">{newThisMonth}</div>
+                  <div className="ds-metric-card__label">New this month</div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="ds-metric-strip">
+              <div className="ds-metric-card ds-metric-card--primary">
+                <div className="ds-metric-card__top">
+                  <div className="ds-metric-card__icon"><UsersRound size={16} strokeWidth={1.8} /></div>
+                  <span className="ds-metric-card__tag">active</span>
+                </div>
+                <div className="ds-metric-card__number">{activeCount}</div>
+                <div className="ds-metric-card__label">Team members</div>
+              </div>
+              <div className="ds-metric-card ds-metric-card--jade">
+                <div className="ds-metric-card__top">
+                  <div className="ds-metric-card__icon"><Timer size={16} strokeWidth={1.8} /></div>
+                  <span className="ds-metric-card__tag">period</span>
+                </div>
+                <div className="ds-metric-card__number">{totalHours.toFixed(1)}</div>
+                <div className="ds-metric-card__label">Hours logged</div>
+              </div>
+              <div className="ds-metric-card">
+                <div className="ds-metric-card__top">
+                  <div className="ds-metric-card__icon"><ClipboardList size={16} strokeWidth={1.8} /></div>
+                  <span className="ds-metric-card__tag">total</span>
+                </div>
+                <div className="ds-metric-card__number">{totalRecords}</div>
+                <div className="ds-metric-card__label">Clock records</div>
+              </div>
+              <div className={`ds-metric-card ${proserveAlerts > 0 ? "ds-metric-card--warn" : ""}`}>
+                <div className="ds-metric-card__top">
+                  <div className="ds-metric-card__icon"><IdCard size={16} strokeWidth={1.8} /></div>
+                  <span className="ds-metric-card__tag">{proserveAlerts > 0 ? "alert" : "ok"}</span>
+                </div>
+                <div className="ds-metric-card__number">{proserveAlerts}</div>
+                <div className="ds-metric-card__label">ProServe alerts</div>
               </div>
             </div>
-            <div className="admin-hero__actions flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleBackToKiosk}
-                className="admin-button admin-button--secondary"
-              >
-                Back to kiosk
-              </button>
-              <button onClick={handleLogout} className="admin-button admin-button--primary">Sign out</button>
-            </div>
-          </div>
-          <div className="admin-hero__secondary">
-            <p className="admin-hero__subtitle admin-hero__subtitle--secondary">
-              Manage employees, time records, payroll, and audit activity from one clean workspace.
-            </p>
-          </div>
-          <div className="admin-hero__tabs mt-8">
-            <SectionTabs tabs={sectionTabs} activeTab={activeSection} onChange={setActiveSection} />
-          </div>
-        </div>
+          );
+        })()}
 
-        {error ? <div className="admin-alert admin-alert--error">{error}</div> : null}
-        {feedback ? <div className="admin-alert admin-alert--success">{feedback}</div> : null}
+        {feedback && (
+          <div className="admin-alert admin-alert--success" style={{ marginBottom: "1rem" }}>{feedback}</div>
+        )}
+        {error && (
+          <div className="admin-alert admin-alert--error" style={{ marginBottom: "1rem" }}>{error}</div>
+        )}
+
+        <div className="ds-page-body">
 
         {activeSection === "employees" ? (
-          <div className="admin-stack">
-            <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-              <div className="admin-panel__header admin-panel__header--split">
-                <div>
-                  <h2 className="admin-panel__title text-2xl font-bold">Employees</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
-                    Keep the employee list compact and open creation only when needed.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsEmployeeCreateOpen((current) => !current)}
-                  className="admin-button admin-button--primary"
-                >
-                  {isEmployeeCreateOpen ? "Close" : "+ Add employee"}
-                </button>
-              </div>
-
-              {isEmployeeCreateOpen ? (
+          <div className="admin-panel">
+            {isEmployeeCreateOpen ? (
+              <div style={{ marginBottom: "1.5rem" }}>
               <form onSubmit={handleCreateEmployee} className="admin-form-stack admin-employee-create-drawer mt-6">
                 <label className="admin-field">
                   <span className="admin-field__label">Employee name</span>
@@ -1643,45 +2869,86 @@ function AdminView() {
                   />
                 </label>
 
-                <label className="admin-field">
-                  <span className="admin-field__label">Hourly rate</span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={employeeCreateForm.defaultHourlyRate}
-                    onChange={(event) =>
-                      setEmployeeCreateForm((current) => ({
-                        ...current,
-                        defaultHourlyRate: event.target.value,
-                      }))
-                    }
-                    className="admin-input"
-                    required
-                  />
-                </label>
+                <div className="admin-field">
+                  <span className="admin-field__label">Pay type</span>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button
+                      type="button"
+                      onClick={() => setEmployeeCreateForm((c) => ({ ...c, pay_type: "hourly" }))}
+                      className={`ef-pay-toggle ${(employeeCreateForm.pay_type || "hourly") === "hourly" ? "ef-pay-toggle--active" : ""}`}
+                    >Hourly</button>
+                    <button
+                      type="button"
+                      onClick={() => setEmployeeCreateForm((c) => ({ ...c, pay_type: "salaried" }))}
+                      className={`ef-pay-toggle ${employeeCreateForm.pay_type === "salaried" ? "ef-pay-toggle--active" : ""}`}
+                    >Salaried</button>
+                  </div>
+                </div>
 
-                <label className="admin-field">
-                  <span className="admin-field__label">Pay frequency</span>
-                  <select
-                    value={employeeCreateForm.defaultPayFrequency}
-                    onChange={(event) =>
-                      setEmployeeCreateForm((current) => ({
-                        ...current,
-                        defaultPayFrequency: event.target.value,
-                      }))
-                    }
-                    className="admin-select"
-                    required
-                  >
-                    <option value="">Select pay frequency</option>
-                    {(payrollConfig?.pay_frequency_options || []).map((option) => (
-                      <option key={option.code} value={option.code}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {(employeeCreateForm.pay_type || "hourly") === "hourly" && (
+                  <>
+                    <label className="admin-field">
+                      <span className="admin-field__label">Hourly rate</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={employeeCreateForm.defaultHourlyRate}
+                        onChange={(event) =>
+                          setEmployeeCreateForm((current) => ({
+                            ...current,
+                            defaultHourlyRate: event.target.value,
+                          }))
+                        }
+                        className="admin-input"
+                        required
+                      />
+                    </label>
+
+                    <label className="admin-field">
+                      <span className="admin-field__label">Pay frequency</span>
+                      <select
+                        value={employeeCreateForm.defaultPayFrequency}
+                        onChange={(event) =>
+                          setEmployeeCreateForm((current) => ({
+                            ...current,
+                            defaultPayFrequency: event.target.value,
+                          }))
+                        }
+                        className="admin-select"
+                        required
+                      >
+                        <option value="">Select pay frequency</option>
+                        {(payrollConfig?.pay_frequency_options || []).map((option) => (
+                          <option key={option.code} value={option.code}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+
+                {employeeCreateForm.pay_type === "salaried" && (
+                  <>
+                    <label className="admin-field">
+                      <span className="admin-field__label">Annual salary ($)</span>
+                      <input type="number" min="0" step="1000" className="admin-input"
+                        value={employeeCreateForm.annual_salary || ""}
+                        onChange={(e) => setEmployeeCreateForm((c) => ({ ...c, annual_salary: e.target.value }))} />
+                    </label>
+                    <label className="admin-field">
+                      <span className="admin-field__label">Monthly salary (auto)</span>
+                      <input type="text" readOnly className="admin-input ef-input--readonly"
+                        value={employeeCreateForm.annual_salary ? `$${(Number(employeeCreateForm.annual_salary) / 12).toFixed(2)}` : "—"} />
+                    </label>
+                    <label className="admin-field">
+                      <span className="admin-field__label">Vacation pay rule</span>
+                      <input type="text" readOnly className="admin-input ef-input--readonly"
+                        value={`${getVacationPayPercentForStartDate(employeeCreateForm.startDate)}% by service date`} />
+                    </label>
+                  </>
+                )}
 
                 <label className="admin-field">
                   <span className="admin-field__label">Start date</span>
@@ -1737,93 +3004,103 @@ function AdminView() {
                   Create employee
                 </button>
               </form>
-              ) : null}
-            </div>
-            <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-              <div className="admin-panel__header admin-panel__header--split">
-                <div>
-                  <h2 className="admin-panel__title text-2xl font-bold">Employee list</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
-                    Compact rows keep the team visible. Open one employee only when you need to edit it.
-                  </p>
-                </div>
-                <div className="admin-note">
-                  Leave the PIN field blank to keep the current secure PIN hash.
-                </div>
               </div>
+            ) : null}
 
-              <div className="admin-employees-toolbar mt-6">
+            <div className="admin-team-toolbar">
+              <div className="admin-team-toolbar__left">
+                <h2 className="admin-panel__title">Team</h2>
+                <span className="admin-team-header__count">
+                  {filteredAdminEmployees.length} employee{filteredAdminEmployees.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="admin-team-toolbar__right">
                 <input
                   type="text"
+                  className="admin-team-search"
+                  placeholder="Search by name…"
                   value={employeeSearch}
-                  onChange={(event) => setEmployeeSearch(event.target.value)}
-                  className="admin-input"
-                  placeholder="Search employees"
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
                 />
-                <div className="admin-inline-notes">
-                  <div className="admin-note admin-note--soft">
-                    <strong>Hide / deactivate</strong>
-                    <span>Removes the employee from the kiosk but keeps all history and payroll data.</span>
-                  </div>
-                  <div className="admin-note admin-note--danger">
-                    <strong>Delete permanently</strong>
-                    <span>Only available when there are no time records or payroll items for that employee.</span>
-                  </div>
-                </div>
+                <button
+                  className={`admin-button admin-button--compact ${isEmployeeCreateOpen ? "admin-button--primary" : "admin-button--secondary"}`}
+                  onClick={() => setIsEmployeeCreateOpen((c) => !c)}
+                >
+                  {isEmployeeCreateOpen ? "✕ Cancel" : "+ New employee"}
+                </button>
               </div>
+            </div>
 
-              {filteredAdminEmployees.length === 0 ? (
-                <div className="admin-empty-state mt-6">
-                  No employees match the current search.
-                </div>
-              ) : (
-                <div className="admin-employee-compact-list mt-6">
+            <div className="emp-table-wrap">
+              <table className="emp-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Status</th>
+                    <th>Rate</th>
+                    <th>Pay frequency</th>
+                    <th>Since</th>
+                    <th>ProServe</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
                   {filteredAdminEmployees.map((employee) => {
                     const draft = employeeSettingsDrafts[employee.id] || {};
                     const isSelected = selectedEmployeeId === employee.id;
-
-                    return (
-                      <div
-                        key={employee.id}
-                        className={`admin-employee-compact-card ${isSelected ? "is-selected" : ""}`}
+                    const ps = proserveStatus(employee.proserve_expiry);
+                    const initial = (employee.name || "?")[0].toUpperCase();
+                    const isSalaried = (draft.pay_type || employee.pay_type) === "salaried";
+                    return [
+                      <tr
+                        key={`emp-${employee.id}`}
+                        className={`emp-table__row ${isSelected ? "is-selected" : ""}`}
+                        onClick={() => setSelectedEmployeeId(isSelected ? null : employee.id)}
+                        style={{ cursor: "pointer" }}
                       >
-                        <div className="admin-employee-compact-card__row">
-                          <div className="admin-employee-compact-card__main">
-                            <div className="admin-employee-row__title">{draft.name || employee.name}</div>
-                            <div className="admin-employee-row__meta">
-                              <span className={`admin-status-badge ${draft.active ? "is-active" : "is-inactive"}`}>
-                                {draft.active ? "Visible" : "Hidden"}
-                              </span>
-                              <span className="admin-employee-row__balance admin-badge admin-badge--neutral">
-                                Vacation ${Number(draft.accruedVacationBalance ?? 0).toFixed(2)}
-                              </span>
+                        <td>
+                          <div className="emp-table__name-cell">
+                            <div className="emp-table__avatar">{initial}</div>
+                            <div className="emp-table__name-stack">
+                              <span className="emp-table__name">{employee.name}</span>
+                              {employee.email ? <span className="emp-table__email">{employee.email}</span> : null}
                             </div>
                           </div>
-                          <div className="admin-employee-compact-card__actions">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSelectedEmployeeId((current) =>
-                                  current === employee.id ? null : employee.id,
-                                )
-                              }
-                              className="admin-button admin-button--secondary admin-button--compact"
-                            >
-                              {isSelected ? "Close" : "Edit"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteEmployee(employee)}
-                              className="admin-button admin-button--danger admin-button--compact"
-                              disabled={!employee.can_delete}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-
-                        {isSelected ? (
-                          <div className="admin-employee-inline-detail">
+                        </td>
+                        <td>
+                          <span className={`emp-status-badge ${(draft.active !== undefined ? draft.active : employee.active) ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>
+                            {(draft.active !== undefined ? draft.active : employee.active) ? "Active" : "Hidden"}
+                          </span>
+                        </td>
+                        <td className="emp-table__data">
+                          {isSalaried
+                            ? `$${Number((draft.annual_salary || employee.annual_salary || 0)).toLocaleString()}/yr`
+                            : `$${Number(draft.defaultHourlyRate || employee.default_hourly_rate || 0).toFixed(2)}/hr`}
+                        </td>
+                        <td className="emp-table__data">
+                          {isSalaried ? "Monthly salary" : (draft.defaultPayFrequency || employee.default_pay_frequency || "—")}
+                        </td>
+                        <td className="emp-table__data">
+                          {employee.start_date ? new Date(employee.start_date + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, year: "numeric", month: "short", day: "numeric" }) : "—"}
+                        </td>
+                        <td>
+                          {ps === "ok" && <span className="emp-ps-badge--ok">OK</span>}
+                          {ps === "expiring" && <span className="emp-ps-badge--warn">Expiring</span>}
+                          {ps === "expired" && <span className="emp-ps-badge--danger">Expired</span>}
+                        </td>
+                        <td className="emp-table__actions-cell">
+                          <button
+                            className={`admin-employee-card-btn ${isSelected ? "admin-employee-card-btn--close" : ""}`}
+                            onClick={(e) => { e.stopPropagation(); setSelectedEmployeeId(isSelected ? null : employee.id); }}
+                          >
+                            {isSelected ? "Close" : "Edit"}
+                          </button>
+                        </td>
+                      </tr>,
+                      isSelected ? (
+                        <tr key={`detail-${employee.id}`} className="emp-detail-row">
+                          <td colSpan={7} className="emp-detail-cell">
+                            <div className="admin-employee-inline-detail">
                             <div className="admin-employee-detail__header">
                               <div>
                                 <h3 className="admin-employee-detail__title">{draft.name || employee.name}</h3>
@@ -1876,49 +3153,90 @@ function AdminView() {
                                 />
                               </label>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Hourly rate</span>
-                                <input
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={draft.defaultHourlyRate ?? ""}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        defaultHourlyRate: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-input"
-                                />
-                              </label>
+                              <div className="admin-field">
+                                <span className="admin-field__label">Pay type</span>
+                                <div style={{ display: "flex", gap: "0.5rem" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "hourly" } }))}
+                                    className={`ef-pay-toggle ${(draft.pay_type || "hourly") === "hourly" ? "ef-pay-toggle--active" : ""}`}
+                                  >Hourly</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], pay_type: "salaried" } }))}
+                                    className={`ef-pay-toggle ${draft.pay_type === "salaried" ? "ef-pay-toggle--active" : ""}`}
+                                  >Salaried</button>
+                                </div>
+                              </div>
 
-                              <label className="admin-field">
-                                <span className="admin-field__label">Pay frequency</span>
-                                <select
-                                  value={draft.defaultPayFrequency ?? ""}
-                                  onChange={(event) =>
-                                    setEmployeeSettingsDrafts((current) => ({
-                                      ...current,
-                                      [employee.id]: {
-                                        ...current[employee.id],
-                                        defaultPayFrequency: event.target.value,
-                                      },
-                                    }))
-                                  }
-                                  className="admin-select"
-                                >
-                                  <option value="">Select pay frequency</option>
-                                  {(payrollConfig?.pay_frequency_options || []).map((option) => (
-                                    <option key={option.code} value={option.code}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
+                              {(draft.pay_type || "hourly") === "hourly" && (
+                                <>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Hourly rate</span>
+                                    <input
+                                      type="number"
+                                      min="0.01"
+                                      step="0.01"
+                                      value={draft.defaultHourlyRate ?? ""}
+                                      onChange={(event) =>
+                                        setEmployeeSettingsDrafts((current) => ({
+                                          ...current,
+                                          [employee.id]: {
+                                            ...current[employee.id],
+                                            defaultHourlyRate: event.target.value,
+                                          },
+                                        }))
+                                      }
+                                      className="admin-input"
+                                    />
+                                  </label>
+
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Pay frequency</span>
+                                    <select
+                                      value={draft.defaultPayFrequency ?? ""}
+                                      onChange={(event) =>
+                                        setEmployeeSettingsDrafts((current) => ({
+                                          ...current,
+                                          [employee.id]: {
+                                            ...current[employee.id],
+                                            defaultPayFrequency: event.target.value,
+                                          },
+                                        }))
+                                      }
+                                      className="admin-select"
+                                    >
+                                      <option value="">Select pay frequency</option>
+                                      {(payrollConfig?.pay_frequency_options || []).map((option) => (
+                                        <option key={option.code} value={option.code}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </>
+                              )}
+
+                              {draft.pay_type === "salaried" && (
+                                <>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Annual salary ($)</span>
+                                    <input type="number" min="0" step="1000" className="admin-input"
+                                      value={draft.annual_salary ?? ""}
+                                      onChange={(e) => setEmployeeSettingsDrafts((c) => ({ ...c, [employee.id]: { ...c[employee.id], annual_salary: e.target.value } }))} />
+                                  </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Monthly salary (auto)</span>
+                                    <input type="text" readOnly className="admin-input ef-input--readonly"
+                                      value={draft.annual_salary ? `$${(Number(draft.annual_salary) / 12).toFixed(2)}` : "—"} />
+                                  </label>
+                                  <label className="admin-field">
+                                    <span className="admin-field__label">Vacation pay rule</span>
+                                    <input type="text" readOnly className="admin-input ef-input--readonly"
+                                      value={`${getVacationPayPercentForStartDate(draft.startDate)}% by service date`} />
+                                  </label>
+                                </>
+                              )}
 
                               <label className="admin-field">
                                 <span className="admin-field__label">Start date</span>
@@ -1956,6 +3274,103 @@ function AdminView() {
                                   <option value="monthly">Monthly payout</option>
                                   <option value="accrued">Accrued balance</option>
                                 </select>
+                              </label>
+
+                              <div className="form-section-divider">Personal Information</div>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">Phone</span>
+                                <input type="tel" className="admin-input" placeholder="+1 (403) 000-0000"
+                                  value={draft.phone ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], phone: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">Email</span>
+                                <input type="email" className="admin-input" placeholder="employee@example.com"
+                                  value={draft.email ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], email: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">SIN (Social Insurance Number)</span>
+                                <input type="text" className="admin-input" placeholder="000 000 000"
+                                  value={draft.sin ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], sin: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field" style={{ gridColumn: "1/-1" }}>
+                                <span className="admin-field__label">Home Address</span>
+                                <input type="text" className="admin-input" placeholder="123 Main St, Banff, AB T1L 1A1"
+                                  value={draft.home_address ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], home_address: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">Hire Date</span>
+                                <input type="date" className="admin-input"
+                                  value={draft.hire_date ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], hire_date: e.target.value } }))} />
+                              </label>
+
+                              <div className="form-section-divider">ProServe Certification</div>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">ProServe Number</span>
+                                <input type="text" className="admin-input" placeholder="PS-000000"
+                                  value={draft.proserve_number ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_number: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">ProServe Expiry Date</span>
+                                <input type="date" className="admin-input"
+                                  value={draft.proserve_expiry ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], proserve_expiry: e.target.value } }))} />
+                              </label>
+
+                              {draft.proserve_expiry && (() => {
+                                const status = proserveStatus(draft.proserve_expiry);
+                                const styles = {
+                                  expired: { color: "#8A1010", bg: "rgba(180,30,30,0.12)" },
+                                  expiring: { color: "#7A5800", bg: "rgba(255,200,60,0.20)" },
+                                  ok: { color: "#1A6B40", bg: "rgba(30,150,90,0.12)" },
+                                };
+                                const s = styles[status] || styles.ok;
+                                const label = status === "expired" ? "Expired" : status === "expiring" ? "Expiring soon" : "Valid";
+                                return <div style={{ fontSize: "0.8rem", fontWeight: 600, padding: "0.3rem 0.75rem", borderRadius: 50, background: s.bg, color: s.color, display: "inline-flex", alignItems: "center", gap: 4 }}>{label}</div>;
+                              })()}
+
+                              <div className="form-section-divider">Record of Employment (ROE)</div>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">Last Day Worked</span>
+                                <input type="date" className="admin-input"
+                                  value={draft.roe_last_day ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_last_day: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">ROE Insurable Hours</span>
+                                <input type="number" min="0" step="0.5" className="admin-input" placeholder="0"
+                                  value={draft.roe_hours ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_hours: e.target.value } }))} />
+                              </label>
+
+                              <label className="admin-field">
+                                <span className="admin-field__label">ROE Insurable Earnings</span>
+                                <input type="number" min="0" step="0.01" className="admin-input" placeholder="0.00"
+                                  value={draft.roe_wage ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], roe_wage: e.target.value } }))} />
+                              </label>
+
+                              <div className="form-section-divider">Benefits &amp; Notes</div>
+
+                              <label className="admin-field" style={{ gridColumn: "1/-1" }}>
+                                <span className="admin-field__label">Benefits Note</span>
+                                <textarea className="admin-input admin-textarea" rows={3} placeholder="e.g. Extended health coverage, meal allowance..."
+                                  value={draft.benefits_note ?? ""}
+                                  onChange={e => setEmployeeSettingsDrafts(c => ({ ...c, [employee.id]: { ...c[employee.id], benefits_note: e.target.value } }))} />
                               </label>
                             </div>
 
@@ -2006,12 +3421,13 @@ function AdminView() {
                               </button>
                             </div>
                           </div>
-                        ) : null}
-                      </div>
-                    );
+                          </td>
+                        </tr>
+                      ) : null,
+                    ];
                   })}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
           </div>
         ) : null}
@@ -2022,13 +3438,13 @@ function AdminView() {
 
             <div className="admin-layout-two-column">
               <div className="admin-stack">
-                <div className="admin-panel admin-panel--sidebar rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel admin-panel--sidebar p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">
                         {formMode === "edit" ? "Edit clock record" : "Add clock record"}
                       </h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                      <p className="admin-panel__subtitle mt-1 text-sm">
                         Add or correct a check-in or check-out event with full audit tracking.
                       </p>
                     </div>
@@ -2106,13 +3522,13 @@ function AdminView() {
                   </form>
                 </div>
 
-                <div className="admin-panel admin-panel--sidebar rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel admin-panel--sidebar p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">
                         {manualHoursMode === "edit" ? "Edit manual hours" : "Add manual hours"}
                       </h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                      <p className="admin-panel__subtitle mt-1 text-sm">
                         Add regular hours and optional Family Day or holiday hours for missed punches, corrections, or past periods.
                       </p>
                     </div>
@@ -2282,11 +3698,11 @@ function AdminView() {
               </div>
 
               <div className="admin-stack">
-                <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">Filters</h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                      <p className="admin-panel__subtitle mt-1 text-sm">
                         Filter history by employee, period, and record status.
                       </p>
                     </div>
@@ -2347,6 +3763,13 @@ function AdminView() {
 
                     <div className="admin-actions-row">
                       <button
+                        className={`admin-button admin-button--compact ${openOnly ? "admin-button--primary" : "admin-button--secondary"}`}
+                        onClick={() => setOpenOnly(o => !o)}
+                        title="Show only employees with open check-ins (no matching check-out)"
+                      >
+                        {openOnly ? "✓ Open only" : "Open only"}
+                      </button>
+                      <button
                         onClick={() => {
                           setPage(1);
                           setPageSize(DEFAULT_PAGE_SIZE);
@@ -2356,6 +3779,7 @@ function AdminView() {
                             end: "",
                             recordStatus: "active",
                           });
+                          setOpenOnly(false);
                         }}
                         className="admin-button admin-button--secondary"
                       >
@@ -2371,11 +3795,11 @@ function AdminView() {
                   </div>
                 </div>
 
-                <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">Summary by employee</h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                      <p className="admin-panel__subtitle mt-1 text-sm">
                         {selectedEmployeeSummary
                           ? `Selected employee: ${selectedEmployeeSummary.employee_name}`
                           : "Review totals and payroll-ready hours for the selected period."}
@@ -2387,7 +3811,7 @@ function AdminView() {
                   <div className="admin-table-wrap mt-6 overflow-x-auto">
                     <table className="admin-data-table w-full border-collapse text-left">
                       <thead>
-                        <tr className="border-b border-stone-200 text-stone-600">
+                        <tr className="admin-data-table__header-row">
                           <th className="py-3 pr-4">Employee</th>
                           <th className="py-3 pr-4">Check-ins</th>
                           <th className="py-3 pr-4">Check-outs</th>
@@ -2401,13 +3825,13 @@ function AdminView() {
                       <tbody>
                         {summary.employees.length === 0 && !isLoading ? (
                           <tr>
-                            <td className="py-4 text-stone-500" colSpan="8">
+                            <td className="py-4 admin-subtle-text" colSpan="8">
                               No data found for the selected filters.
                             </td>
                           </tr>
                         ) : null}
                         {summary.employees.map((item) => (
-                          <tr key={item.employee_id} className="border-b border-stone-100">
+                          <tr key={item.employee_id}>
                             <td className="py-4 pr-4 font-medium">{item.employee_name}</td>
                             <td className="py-4 pr-4">{item.check_ins}</td>
                             <td className="py-4 pr-4">{item.check_outs}</td>
@@ -2425,12 +3849,12 @@ function AdminView() {
               </div>
             </div>
 
-            <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+            <div className="admin-panel p-6">
               <div className="admin-panel__header admin-panel__header--split">
                 <div>
                   <h2 className="admin-panel__title text-2xl font-bold">Time Records</h2>
                   {!isLoading ? (
-                    <p className="admin-panel__subtitle mt-1 text-sm text-stone-500">{recordsResponse.total} total records</p>
+                    <p className="admin-panel__subtitle mt-1 text-sm">{recordsResponse.total} total records</p>
                   ) : null}
                 </div>
                 <div className="admin-actions-row">
@@ -2470,79 +3894,108 @@ function AdminView() {
                 </div>
               </div>
 
-              <div className="admin-table-wrap overflow-x-auto">
-                <table className="admin-data-table w-full border-collapse text-left">
-                  <thead>
-                    <tr className="border-b border-stone-200 text-stone-600">
-                      <th className="py-3 pr-4">Date and time</th>
-                      <th className="py-3 pr-4">Employee</th>
-                      <th className="py-3 pr-4">Type</th>
-                      <th className="py-3 pr-4">Details</th>
-                      <th className="py-3 pr-4">Origin</th>
-                      <th className="py-3 pr-4">Updated at</th>
-                      <th className="py-3 pr-4">Status</th>
-                      <th className="py-3 pr-4">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recordsResponse.items.length === 0 && !isLoading ? (
-                      <tr>
-                        <td className="py-4 text-stone-500" colSpan="8">
-                          No records found for the selected filters.
-                        </td>
-                      </tr>
-                    ) : null}
-                    {recordsResponse.items.map((record) => (
-                      <tr key={record.id} className="border-b border-stone-100">
-                        <td className="py-4 pr-4">{formatDateTime(record.recorded_at)}</td>
-                        <td className="py-4 pr-4 font-medium">{record.employee_name}</td>
-                        <td className="py-4 pr-4">{formatTimeRecordType(record)}</td>
-                        <td className="py-4 pr-4">
-                          {record.entry_mode === "manual"
-                            ? record.note || "-"
-                            : record.kiosk_id || "-"}
-                        </td>
-                        <td className="py-4 pr-4">
-                          {record.entry_mode === "manual"
-                            ? "manual hours"
-                            : record.created_manually
-                              ? "manual clock"
-                              : "kiosk"}
-                        </td>
-                        <td className="py-4 pr-4">{formatDateTime(record.updated_at)}</td>
-                        <td className="py-4 pr-4">{record.deleted_at ? "deleted" : "active"}</td>
-                        <td className="py-4 pr-4">
-                          <div className="flex gap-2">
-                            {!record.deleted_at ? (
-                              <>
-                                <button
-                                  onClick={() => handleEdit(record)}
-                                  className="admin-button admin-button--secondary admin-button--compact"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(record)}
-                                  className="admin-button admin-button--danger admin-button--compact"
-                                >
-                                  Delete
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => handleRestore(record)}
-                                className="admin-button admin-button--success admin-button--compact"
-                              >
-                                Restore
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="cr-emp-chips">
+                {summary.employees.map((item) => (
+                  <button
+                    key={item.employee_id}
+                    className={`cr-emp-chip ${filters.employeeId === String(item.employee_id) ? "cr-emp-chip--active" : ""}`}
+                    onClick={() => { setPage(1); setFilters((c) => ({ ...c, employeeId: String(item.employee_id) })); }}
+                  >
+                    <span className="cr-emp-chip__avatar">{(item.employee_name || "?")[0].toUpperCase()}</span>
+                    <span className="cr-emp-chip__name">{item.employee_name}</span>
+                    <span className="cr-emp-chip__hours">{Number(item.payroll_ready_hours || 0).toFixed(1)}h</span>
+                  </button>
+                ))}
               </div>
+
+              <table className="cr-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th></th>
+                    <th>Employee</th>
+                    <th>Type</th>
+                    <th>Source</th>
+                    <th>Note / Kiosk ID</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                {(() => {
+                  const grouped = (recordsResponse.items || []).reduce((acc, record) => {
+                    const day = record.recorded_at
+                      ? new Date(record.recorded_at).toLocaleDateString("en-CA", { timeZone: TZ })
+                      : "unknown";
+                    if (!acc[day]) acc[day] = [];
+                    acc[day].push(record);
+                    return acc;
+                  }, {});
+                  const dayKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+                  if (dayKeys.length === 0 && !isLoading) {
+                    return (
+                      <tbody>
+                        <tr>
+                          <td colSpan={7} style={{ padding: "1rem", opacity: 0.5 }}>No records found for the selected filters.</td>
+                        </tr>
+                      </tbody>
+                    );
+                  }
+                  return dayKeys.map((day) => {
+                    const dayRecords = grouped[day];
+                    const dayLabel = day === "unknown" ? "Unknown date" : new Date(day + "T12:00:00Z").toLocaleDateString("en-CA", { timeZone: TZ, weekday: "long", year: "numeric", month: "long", day: "numeric" }).toUpperCase();
+                    return (
+                      <tbody key={day}>
+                        <tr className="cr-day-header-row">
+                          <td colSpan={7}>
+                            <div className="cr-day-header-inner">
+                              <span className="cr-day-group__label">{dayLabel}</span>
+                              <span className="cr-day-group__count">{dayRecords.length} event{dayRecords.length !== 1 ? "s" : ""}</span>
+                            </div>
+                          </td>
+                        </tr>
+                        {dayRecords.map((record) => {
+                          const initial = (record.employee_name || "?")[0].toUpperCase();
+                          const timeStr = record.recorded_at
+                            ? new Date(record.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
+                            : "—";
+                          const badgeClass = record.entry_type === "check-in" ? "cr-type-badge--in"
+                            : record.entry_type === "check-out" ? "cr-type-badge--out"
+                            : "cr-type-badge--manual";
+                          return (
+                            <tr key={record.id} className={`cr-record-row ${record.deleted_at ? "cr-record-row--deleted" : ""}`}>
+                              <td className="cr-td__time">{timeStr}</td>
+                              <td className="cr-td__avatar">
+                                <span className="cr-row__avatar">{initial}</span>
+                              </td>
+                              <td className="cr-td__name">{record.employee_name}</td>
+                              <td>
+                                <span className={`cr-type-badge ${badgeClass}`}>
+                                  {record.entry_type === "check-in" ? "In" : record.entry_type === "check-out" ? "Out" : record.entry_mode === "manual" ? "Manual" : record.entry_type}
+                                </span>
+                              </td>
+                              <td className="cr-td__muted">{record.entry_mode || "—"}</td>
+                              <td className="cr-td__note">
+                                {record.note || ""}
+                                {record.kiosk_id ? <span style={{ opacity: 0.6 }}> #{record.kiosk_id}</span> : null}
+                                {record.deleted_at ? <span style={{ color: "var(--c-accent)", marginLeft: 4, fontSize: "0.7rem" }}>deleted</span> : null}
+                              </td>
+                              <td className="cr-td__actions">
+                                {!record.deleted_at && (
+                                  <button className="cr-action-btn" onClick={() => handleEdit(record)}>Edit</button>
+                                )}
+                                {!record.deleted_at ? (
+                                  <button className="cr-action-btn cr-action-btn--danger" onClick={() => handleDelete(record)}>Delete</button>
+                                ) : (
+                                  <button className="cr-action-btn" onClick={() => handleRestore(record)}>Restore</button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    );
+                  });
+                })()}
+              </table>
             </div>
           </>
         ) : null}
@@ -2553,9 +4006,9 @@ function AdminView() {
             </div>
 
             <div className="admin-layout-two-column">
-              <div className="admin-panel admin-panel--sidebar rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+              <div className="admin-panel admin-panel--sidebar p-6">
                 <h2 className="admin-panel__title text-2xl font-bold">Generate payroll</h2>
-                <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                <p className="admin-panel__subtitle mt-1 text-sm">
                   Create a payroll period with regular earnings, vacation pay, holiday pay, deductions, and net pay.
                 </p>
 
@@ -2695,9 +4148,9 @@ function AdminView() {
               </div>
 
               <div className="admin-stack">
-                <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel p-6">
                   <h2 className="admin-panel__title text-2xl font-bold">Generated periods</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                  <p className="admin-panel__subtitle mt-1 text-sm">
                     Choose a payroll period to review the team payout package.
                   </p>
                   <div className="admin-payroll-period-list mt-6">
@@ -2738,11 +4191,11 @@ function AdminView() {
                   </div>
                 </div>
 
-                <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+                <div className="admin-panel p-6">
                   <div className="admin-panel__header admin-panel__header--split">
                     <div>
                       <h2 className="admin-panel__title text-2xl font-bold">Payroll details</h2>
-                      <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                      <p className="admin-panel__subtitle mt-1 text-sm">
                         Review payroll totals and employee-level payout details before approval.
                       </p>
                     </div>
@@ -2752,7 +4205,7 @@ function AdminView() {
                           onClick={() => handleExportPayroll(selectedPayroll.id)}
                           className="admin-button admin-button--secondary admin-button--compact"
                         >
-                          Export team CSV
+                          Export Excel
                         </button>
                       ) : null}
                       {selectedPayroll ? (
@@ -2788,59 +4241,59 @@ function AdminView() {
                     <>
                       <div className="admin-metric-grid mb-6">
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Period</div>
+                          <div className="text-sm admin-subtle-text">Period</div>
                           <div className="font-semibold">
                             {selectedPayroll.start_date} to {selectedPayroll.end_date}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Status</div>
+                          <div className="text-sm admin-subtle-text">Status</div>
                           <div className="font-semibold">{selectedPayroll.status}</div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Frequency</div>
+                          <div className="text-sm admin-subtle-text">Frequency</div>
                           <div className="font-semibold">
                             {getPayFrequencyLabel(selectedPayroll.pay_frequency, payrollConfig)} ({selectedPayroll.pay_periods_per_year}/year)
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Pay date</div>
+                          <div className="text-sm admin-subtle-text">Pay date</div>
                           <div className="font-semibold">
                             {selectedPayroll.pay_date || selectedPayroll.end_date}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Gross</div>
+                          <div className="text-sm admin-subtle-text">Gross</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_gross_pay.toFixed(2)}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Total earnings</div>
+                          <div className="text-sm admin-subtle-text">Total earnings</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_earnings.toFixed(2)}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Vacation paid now</div>
+                          <div className="text-sm admin-subtle-text">Vacation paid now</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_vacation_payout.toFixed(2)}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">Vacation accrued</div>
+                          <div className="text-sm admin-subtle-text">Vacation accrued</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_vacation_accrued.toFixed(2)}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">CPP employer</div>
+                          <div className="text-sm admin-subtle-text">CPP employer</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_cpp_employer.toFixed(2)}
                           </div>
                         </div>
                         <div className="admin-metric-card">
-                          <div className="text-sm text-stone-500">EI employer</div>
+                          <div className="text-sm admin-subtle-text">EI employer</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_ei_employer.toFixed(2)}
                           </div>
@@ -2856,7 +4309,11 @@ function AdminView() {
                                 <div>
                                   <h3 className="admin-payroll-item-card__name">{item.employee_name}</h3>
                                   <div className="admin-payroll-item-card__meta">
-                                    {getVacationScheduleLabel(item.vacation_pay_schedule)}
+                                    {item.pay_type === "salaried" ? (
+                                      <span className="cr-type-badge cr-type-badge--salary">Monthly Salary</span>
+                                    ) : (
+                                      getVacationScheduleLabel(item.vacation_pay_schedule)
+                                    )}
                                   </div>
                                 </div>
                                 <div className="admin-payroll-item-card__actions">
@@ -2926,62 +4383,107 @@ function AdminView() {
 
                                     <div className="admin-payroll-detail-card">
                                       <h3 className="admin-payroll-detail-card__title">Notes and actions</h3>
-                                      <div className="admin-payroll-detail-list">
-                                        <div><span>Vacation schedule</span><strong>{getVacationScheduleLabel(item.vacation_pay_schedule)}</strong></div>
-                                        <div><span>Holiday hours</span><strong>{Number(item.holiday_hours || 0).toFixed(2)} h</strong></div>
-                                        <div><span>Wage rate</span><strong>${Number(item.hourly_rate || 0).toFixed(2)}</strong></div>
-                                        <div><span>Net pay</span><strong>${item.net_pay.toFixed(2)}</strong></div>
-                                      </div>
-                                      <div className="admin-payroll-detail-actions">
-                                        {selectedPayroll.status === "draft" ? (
-                                          <div className="admin-payroll-holiday-editor">
-                                            <input
-                                              type="text"
-                                              value={payrollHolidayInputs[item.id]?.label ?? (item.holiday_label || "Holiday Pay")}
-                                              onChange={(event) =>
-                                                setPayrollHolidayInputs((current) => ({
-                                                  ...current,
-                                                  [item.id]: {
-                                                    amount: current[item.id]?.amount ?? String(item.holiday_pay || 0),
-                                                    label: event.target.value,
-                                                  },
-                                                }))
-                                              }
-                                              className="admin-input admin-input--compact"
-                                              placeholder="Family Day"
-                                            />
-                                            <input
-                                              type="number"
-                                              min="0"
-                                              step="0.01"
-                                              value={payrollHolidayInputs[item.id]?.amount ?? String(item.holiday_pay || 0)}
-                                              onChange={(event) =>
-                                                setPayrollHolidayInputs((current) => ({
-                                                  ...current,
-                                                  [item.id]: {
-                                                    amount: event.target.value,
-                                                    label: current[item.id]?.label ?? item.holiday_label ?? "Holiday Pay",
-                                                  },
-                                                }))
-                                              }
-                                              className="admin-input admin-input--compact"
-                                              placeholder="Amount"
-                                            />
-                                            <button
-                                              onClick={() => handleHolidayPaySave(selectedPayroll.id, item.id)}
-                                              className="admin-button admin-button--primary admin-button--compact"
-                                            >
-                                              Save holiday pay
-                                            </button>
+                                      {item.pay_type === "salaried" ? (
+                                        <>
+                                          <div className="admin-payroll-detail-list">
+                                            <div><span>Monthly salary</span><strong>${Number(item.salary_base || 0).toFixed(2)}</strong></div>
+                                            <div><span>Vacation pay ({item.vacation_pay_pct ?? 4}%)</span><strong>${Number(item.salary_vacation_pay || 0).toFixed(2)}</strong></div>
+                                            <div><span>Bonus</span><strong>${Number(item.salary_bonus || 0).toFixed(2)}</strong></div>
+                                            <div><span>Net pay</span><strong>${item.net_pay.toFixed(2)}</strong></div>
                                           </div>
-                                        ) : (
-                                          <div className="admin-note">
-                                            {item.holiday_pay > 0
-                                              ? `${item.holiday_label || "Holiday Pay"}: $${item.holiday_pay.toFixed(2)}`
-                                              : "No holiday pay in this payroll item."}
+                                          <div className="admin-payroll-detail-actions">
+                                            {selectedPayroll.status === "draft" ? (
+                                              <div className="admin-payroll-holiday-editor">
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  step="0.01"
+                                                  value={salariedBonusInputs[item.id] ?? String(item.salary_bonus || 0)}
+                                                  onChange={(event) =>
+                                                    setSalariedBonusInputs((current) => ({
+                                                      ...current,
+                                                      [item.id]: event.target.value,
+                                                    }))
+                                                  }
+                                                  className="admin-input admin-input--compact"
+                                                  placeholder="Bonus amount"
+                                                />
+                                                <button
+                                                  onClick={() => handleSalariedBonusSave(selectedPayroll.id, item.id)}
+                                                  className="admin-button admin-button--primary admin-button--compact"
+                                                >
+                                                  Save bonus
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="admin-note">
+                                                {item.salary_bonus > 0
+                                                  ? `Bonus: $${Number(item.salary_bonus).toFixed(2)}`
+                                                  : "No bonus in this payroll item."}
+                                              </div>
+                                            )}
                                           </div>
-                                        )}
-                                      </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="admin-payroll-detail-list">
+                                            <div><span>Vacation schedule</span><strong>{getVacationScheduleLabel(item.vacation_pay_schedule)}</strong></div>
+                                            <div><span>Holiday hours</span><strong>{Number(item.holiday_hours || 0).toFixed(2)} h</strong></div>
+                                            <div><span>Wage rate</span><strong>${Number(item.hourly_rate || 0).toFixed(2)}</strong></div>
+                                            <div><span>Net pay</span><strong>${item.net_pay.toFixed(2)}</strong></div>
+                                          </div>
+                                          <div className="admin-payroll-detail-actions">
+                                            {selectedPayroll.status === "draft" ? (
+                                              <div className="admin-payroll-holiday-editor">
+                                                <input
+                                                  type="text"
+                                                  value={payrollHolidayInputs[item.id]?.label ?? (item.holiday_label || "Holiday Pay")}
+                                                  onChange={(event) =>
+                                                    setPayrollHolidayInputs((current) => ({
+                                                      ...current,
+                                                      [item.id]: {
+                                                        amount: current[item.id]?.amount ?? String(item.holiday_pay || 0),
+                                                        label: event.target.value,
+                                                      },
+                                                    }))
+                                                  }
+                                                  className="admin-input admin-input--compact"
+                                                  placeholder="Family Day"
+                                                />
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  step="0.01"
+                                                  value={payrollHolidayInputs[item.id]?.amount ?? String(item.holiday_pay || 0)}
+                                                  onChange={(event) =>
+                                                    setPayrollHolidayInputs((current) => ({
+                                                      ...current,
+                                                      [item.id]: {
+                                                        amount: event.target.value,
+                                                        label: current[item.id]?.label ?? item.holiday_label ?? "Holiday Pay",
+                                                      },
+                                                    }))
+                                                  }
+                                                  className="admin-input admin-input--compact"
+                                                  placeholder="Amount"
+                                                />
+                                                <button
+                                                  onClick={() => handleHolidayPaySave(selectedPayroll.id, item.id)}
+                                                  className="admin-button admin-button--primary admin-button--compact"
+                                                >
+                                                  Save holiday pay
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="admin-note">
+                                                {item.holiday_pay > 0
+                                                  ? `${item.holiday_label || "Holiday Pay"}: $${item.holiday_pay.toFixed(2)}`
+                                                  : "No holiday pay in this payroll item."}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -3017,11 +4519,11 @@ function AdminView() {
         ) : null}
         {activeSection === "audit-logs" ? (
           <>
-            <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+            <div className="admin-panel p-6">
               <div className="admin-panel__header admin-panel__header--split">
                 <div>
                   <h2 className="admin-panel__title text-2xl font-bold">Audit logs</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm text-stone-600">
+                  <p className="admin-panel__subtitle mt-1 text-sm">
                     Review administrative activity by entity with filters, pagination, and CSV export.
                   </p>
                 </div>
@@ -3041,11 +4543,11 @@ function AdminView() {
             </div>
 
             {activeAuditSection === "employee" ? (
-              <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+              <div className="admin-panel p-6">
                 <div className="admin-panel__header admin-panel__header--split">
                   <div>
                     <h2 className="text-2xl font-bold">Employee audit</h2>
-                    <p className="mt-1 text-sm text-stone-600">Creation, edits, activation, and deactivation events.</p>
+                    <p className="admin-panel__subtitle mt-1 text-sm">Creation, edits, activation, and deactivation events.</p>
                   </div>
                   <button
                     onClick={() => handleExportAudit("employee")}
@@ -3113,7 +4615,7 @@ function AdminView() {
                 <div className="admin-table-wrap overflow-x-auto">
                   <table className="admin-data-table w-full border-collapse text-left">
                     <thead>
-                      <tr className="border-b border-stone-200 text-stone-600">
+                      <tr className="admin-data-table__header-row">
                         <th className="py-3 pr-4">When</th>
                         <th className="py-3 pr-4">Employee</th>
                         <th className="py-3 pr-4">Action</th>
@@ -3124,23 +4626,21 @@ function AdminView() {
                     <tbody>
                       {employeeAuditResponse.items.length === 0 ? (
                         <tr>
-                          <td className="py-4 text-stone-500" colSpan="5">
+                          <td className="py-4 admin-subtle-text" colSpan="5">
                             No audit events found.
                           </td>
                         </tr>
                       ) : null}
                       {employeeAuditResponse.items.map((log) => (
-                        <tr key={log.id} className="border-b border-stone-100 align-top">
+                        <tr key={log.id} className="align-top">
                           <td className="py-4 pr-4">{formatDateTime(log.changed_at)}</td>
                           <td className="py-4 pr-4 font-medium">
                             {employeeNamesById[log.entity_id] || `#${log.entity_id}`}
                           </td>
                           <td className="py-4 pr-4">{log.action}</td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
-                          <td className="py-4 pr-4 text-xs text-stone-600">
-                            <pre className="whitespace-pre-wrap">
-                              {JSON.stringify(log.changed_fields, null, 2)}
-                            </pre>
+                          <td className="py-4 pr-4 text-xs admin-subtle-text">
+                            <AuditDiff changedFields={log.changed_fields} />
                           </td>
                         </tr>
                       ))}
@@ -3165,11 +4665,11 @@ function AdminView() {
             ) : null}
 
             {activeAuditSection === "time_record" ? (
-              <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+              <div className="admin-panel p-6">
                 <div className="admin-panel__header admin-panel__header--split">
                   <div>
                     <h2 className="text-2xl font-bold">Time record audit</h2>
-                    <p className="mt-1 text-sm text-stone-600">
+                    <p className="admin-panel__subtitle mt-1 text-sm">
                       Manual creation, editing, deletion, and restoration events.
                     </p>
                   </div>
@@ -3257,7 +4757,7 @@ function AdminView() {
                 <div className="admin-table-wrap overflow-x-auto">
                   <table className="admin-data-table w-full border-collapse text-left">
                     <thead>
-                      <tr className="border-b border-stone-200 text-stone-600">
+                      <tr className="admin-data-table__header-row">
                         <th className="py-3 pr-4">When</th>
                         <th className="py-3 pr-4">Record</th>
                         <th className="py-3 pr-4">Employee</th>
@@ -3269,13 +4769,13 @@ function AdminView() {
                     <tbody>
                       {timeRecordAuditResponse.items.length === 0 ? (
                         <tr>
-                          <td className="py-4 text-stone-500" colSpan="6">
+                          <td className="py-4 admin-subtle-text" colSpan="6">
                             No audit events found.
                           </td>
                         </tr>
                       ) : null}
                       {timeRecordAuditResponse.items.map((log) => (
-                        <tr key={log.id} className="border-b border-stone-100 align-top">
+                        <tr key={log.id} className="align-top">
                           <td className="py-4 pr-4">{formatDateTime(log.changed_at)}</td>
                           <td className="py-4 pr-4">#{log.entity_id}</td>
                           <td className="py-4 pr-4">
@@ -3285,10 +4785,8 @@ function AdminView() {
                           </td>
                           <td className="py-4 pr-4">{log.action}</td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
-                          <td className="py-4 pr-4 text-xs text-stone-600">
-                            <pre className="whitespace-pre-wrap">
-                              {JSON.stringify(log.changed_fields, null, 2)}
-                            </pre>
+                          <td className="py-4 pr-4 text-xs admin-subtle-text">
+                            <AuditDiff changedFields={log.changed_fields} />
                           </td>
                         </tr>
                       ))}
@@ -3313,11 +4811,11 @@ function AdminView() {
             ) : null}
 
             {activeAuditSection === "payroll" ? (
-              <div className="admin-panel rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
+              <div className="admin-panel p-6">
                 <div className="admin-panel__header admin-panel__header--split">
                   <div>
                     <h2 className="text-2xl font-bold">Payroll audit</h2>
-                    <p className="mt-1 text-sm text-stone-600">
+                    <p className="admin-panel__subtitle mt-1 text-sm">
                       Generation, approval, and payroll adjustments.
                     </p>
                   </div>
@@ -3405,7 +4903,7 @@ function AdminView() {
                 <div className="admin-table-wrap overflow-x-auto">
                   <table className="admin-data-table w-full border-collapse text-left">
                     <thead>
-                      <tr className="border-b border-stone-200 text-stone-600">
+                      <tr className="admin-data-table__header-row">
                         <th className="py-3 pr-4">When</th>
                         <th className="py-3 pr-4">Payroll</th>
                         <th className="py-3 pr-4">Employee</th>
@@ -3417,13 +4915,13 @@ function AdminView() {
                     <tbody>
                       {payrollAuditResponse.items.length === 0 ? (
                         <tr>
-                          <td className="py-4 text-stone-500" colSpan="6">
+                          <td className="py-4 admin-subtle-text" colSpan="6">
                             No audit events found.
                           </td>
                         </tr>
                       ) : null}
                       {payrollAuditResponse.items.map((log) => (
-                        <tr key={log.id} className="border-b border-stone-100 align-top">
+                        <tr key={log.id} className="align-top">
                           <td className="py-4 pr-4">{formatDateTime(log.changed_at)}</td>
                           <td className="py-4 pr-4">#{log.entity_id}</td>
                           <td className="py-4 pr-4">
@@ -3433,10 +4931,8 @@ function AdminView() {
                           </td>
                           <td className="py-4 pr-4">{log.action}</td>
                           <td className="py-4 pr-4">{log.admin_user || "-"}</td>
-                          <td className="py-4 pr-4 text-xs text-stone-600">
-                            <pre className="whitespace-pre-wrap">
-                              {JSON.stringify(log.changed_fields, null, 2)}
-                            </pre>
+                          <td className="py-4 pr-4 text-xs admin-subtle-text">
+                            <AuditDiff changedFields={log.changed_fields} />
                           </td>
                         </tr>
                       ))}
@@ -3461,7 +4957,25 @@ function AdminView() {
             ) : null}
           </>
         ) : null}
-      </div>
+        {activeSection === "payroll-review" ? (
+          <PayrollReviewView adminFetch={adminFetch} payrolls={payrollPeriods || []} adminUser={adminUser} />
+        ) : null}
+        {activeSection === "messages" ? (
+          <MessagesView
+            adminFetch={adminFetch}
+            employees={adminEmployees || []}
+          />
+        ) : null}
+
+        {activeSection === "settings" ? (
+          <SettingsView
+            adminUser={adminUser}
+            adminFetch={adminFetch}
+            onUserUpdated={(updated) => setAdminUser(updated)}
+          />
+        ) : null}
+        </div>
+      </main>
     </div>
   );
 }

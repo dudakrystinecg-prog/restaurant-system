@@ -3,6 +3,7 @@ import AdminView from "./AdminView";
 import "./App.css";
 
 const API_BASE_URL = "/api";
+const TZ = "America/Edmonton"; // Banff, Alberta — Mountain Time
 const WEATHER_URL =
   "https://api.open-meteo.com/v1/forecast?latitude=51.1784&longitude=-115.5708&current=temperature_2m,weather_code&timezone=auto&forecast_days=1";
 const LOGO_SRC = "/logo.png";
@@ -103,6 +104,7 @@ function ClockPanel({ now }) {
           weekday: "long",
           month: "long",
           day: "numeric",
+          timeZone: TZ,
         }).format(now)}
       </div>
       <div className="kiosk-clock-time">
@@ -110,11 +112,13 @@ function ClockPanel({ now }) {
           hour: "numeric",
           minute: "2-digit",
           hour12: true,
+          timeZone: TZ,
         }).format(now)}
       </div>
       <div className="kiosk-weather-condition">
         {new Intl.DateTimeFormat("en-CA", {
           year: "numeric",
+          timeZone: TZ,
         }).format(now)}
       </div>
     </div>
@@ -528,6 +532,14 @@ function KioskView() {
       <div className="kiosk-mountain-wrap" aria-hidden="true">
         <img src={MOUNTAIN_OVERLAY_SRC} alt="" className="kiosk-mountain-image" />
       </div>
+
+      <button
+        className="kiosk-admin-link"
+        onClick={() => { window.location.href = "/admin"; }}
+        aria-label="Go to admin panel"
+      >
+        Admin
+      </button>
     </div>
   );
 }

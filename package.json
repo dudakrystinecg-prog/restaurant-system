@@ -23,7 +23,12 @@
     "better-sqlite3": "^12.8.0",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "pdfkit": "^0.19.1",
+    "puppeteer": "^25.2.1",
+    "resend": "^6.14.0"
   },
   "devDependencies": {
     "tailwindcss": "^4.2.2"

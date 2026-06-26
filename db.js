@@ -48,10 +48,11 @@ const VACATION_PAY_SCHEDULES = {
 const DEFAULT_VACATION_PAY_SCHEDULE = "monthly";
 const VACATION_PAY_RULE = {
   type: "service_based_percentage",
+  firstYearRate: 0,
   underFiveYearsRate: 0.04,
   fiveYearsOrMoreRate: 0.06,
   description:
-    "Vacation pay is calculated at 4% for employees with less than 5 years of service and 6% after 5 years. Monthly schedules include vacation pay in the current payroll. Accrued schedules store the value in the employee vacation balance and exclude it from the current payout.",
+    "Vacation pay is calculated at 0% during the first year of service, 4% after 1 year, and 6% after 5 years. Monthly schedules include vacation pay in the current payroll. Accrued schedules store the value in the employee vacation balance and exclude it from the current payout.",
 };
 const DEFAULT_AUDIT_PAGE_SIZE = 10;
 const MAX_AUDIT_PAGE_SIZE = 100;
@@ -132,9 +133,15 @@ function getYearsOfService(startDate, referenceDate) {
 }
 
 function getVacationRateForServiceYears(yearsOfService) {
-  return yearsOfService >= 5
-    ? VACATION_PAY_RULE.fiveYearsOrMoreRate
-    : VACATION_PAY_RULE.underFiveYearsRate;
+  if (yearsOfService >= 5) {
+    return VACATION_PAY_RULE.fiveYearsOrMoreRate;
+  }
+
+  if (yearsOfService >= 1) {
+    return VACATION_PAY_RULE.underFiveYearsRate;
+  }
+
+  return VACATION_PAY_RULE.firstYearRate;
 }
 
 function calculateVacationPayForEmployee({
@@ -376,6 +383,48 @@ function initializeDatabase() {
     "TEXT NOT NULL DEFAULT 'monthly'",
   );
 
+  // Salaried employee support
+  ensureColumnExists("employees", "pay_type", "TEXT NOT NULL DEFAULT 'hourly'");
+  ensureColumnExists("employees", "annual_salary", "REAL");
+  ensureColumnExists("employees", "vacation_pay_pct", "REAL NOT NULL DEFAULT 4.0");
+  ensureColumnExists("employees", "phone", "TEXT");
+  ensureColumnExists("employees", "email", "TEXT");
+  ensureColumnExists("employees", "sin", "TEXT");
+  ensureColumnExists("employees", "home_address", "TEXT");
+  ensureColumnExists("employees", "hire_date", "TEXT");
+  ensureColumnExists("employees", "proserve_number", "TEXT");
+  ensureColumnExists("employees", "proserve_expiry", "TEXT");
+  ensureColumnExists("employees", "roe_last_day", "TEXT");
+  ensureColumnExists("employees", "roe_hours", "REAL");
+  ensureColumnExists("employees", "roe_wage", "REAL");
+  ensureColumnExists("employees", "benefits_note", "TEXT");
+  ensureColumnExists("payroll_items", "pay_type", "TEXT NOT NULL DEFAULT 'hourly'");
+  ensureColumnExists("payroll_items", "salary_base", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "salary_vacation_pay", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "salary_bonus", "REAL NOT NULL DEFAULT 0");
+  ensureColumnExists("payroll_items", "vacation_pay_pct", "REAL NOT NULL DEFAULT 4.0");
+
+  // Admin users table
+  db.prepare(`CREATE TABLE IF NOT EXISTS admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'super_admin',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`).run();
+
+  ensureColumnExists("admin_sessions", "admin_user_id", "INTEGER");
+  ensureColumnExists("admin_sessions", "user_name", "TEXT");
+  ensureColumnExists("admin_users", "active", "INTEGER NOT NULL DEFAULT 1");
+
+  // Pay & Send columns
+  ensureColumnExists("payroll_items", "send_status", "TEXT NOT NULL DEFAULT 'pending'");
+  ensureColumnExists("payroll_items", "sent_at", "TEXT");
+  ensureColumnExists("payroll_items", "payment_reference", "TEXT");
+
   const employeesNeedingMigration = db
     .prepare(
       `
@@ -467,6 +516,9 @@ function listAdminEmployees() {
         start_date,
         vacation_pay_schedule,
         accrued_vacation_balance,
+        pay_type,
+        annual_salary,
+        vacation_pay_pct,
         (
           SELECT COUNT(*)
           FROM time_records tr
@@ -498,6 +550,9 @@ function listAdminEmployees() {
       vacation_pay_schedule:
         employee.vacation_pay_schedule || DEFAULT_VACATION_PAY_SCHEDULE,
       accrued_vacation_balance: Number(employee.accrued_vacation_balance || 0),
+      pay_type: employee.pay_type || 'hourly',
+      annual_salary: employee.annual_salary != null ? Number(employee.annual_salary) : null,
+      vacation_pay_pct: Number(employee.vacation_pay_pct ?? 4),
       time_records_count: Number(employee.time_records_count || 0),
       payroll_items_count: Number(employee.payroll_items_count || 0),
       audit_logs_count: Number(employee.audit_logs_count || 0),
@@ -505,6 +560,16 @@ function listAdminEmployees() {
         Number(employee.time_records_count || 0) === 0 &&
         Number(employee.payroll_items_count || 0) === 0,
     }));
+}
+
+function listActiveSalariedEmployees() {
+  return db.prepare(`
+    SELECT id, name, start_date, annual_salary, vacation_pay_pct,
+           federal_claim_amount, provincial_claim_amount
+    FROM employees
+    WHERE active = 1 AND pay_type = 'salaried' AND annual_salary > 0
+    ORDER BY name ASC
+  `).all();
 }
 
 function getEmployeeDependencySummary(employeeId) {
@@ -557,7 +622,12 @@ function findEmployeeById(employeeId) {
         default_pay_frequency,
         start_date,
         vacation_pay_schedule,
-        accrued_vacation_balance
+        accrued_vacation_balance,
+        pay_type,
+        annual_salary,
+        vacation_pay_pct,
+        federal_claim_amount,
+        provincial_claim_amount
       FROM employees
       WHERE id = ?
       `,
@@ -574,6 +644,20 @@ function updateEmployeePayrollSettings({
   defaultPayFrequency,
   startDate,
   vacationPaySchedule,
+  payType = undefined,
+  annualSalary = undefined,
+  vacationPayPct = undefined,
+  phone = undefined,
+  email = undefined,
+  sin = undefined,
+  homeAddress = undefined,
+  hireDate = undefined,
+  proserveNumber = undefined,
+  proserveExpiry = undefined,
+  roeLastDay = undefined,
+  roeHours = undefined,
+  roeWage = undefined,
+  benefitsNote = undefined,
   adminUser = null,
 }) {
   const currentEmployee = findEmployeeById(employeeId);
@@ -594,7 +678,21 @@ function updateEmployeePayrollSettings({
       default_hourly_rate = ?,
       default_pay_frequency = ?,
       start_date = COALESCE(?, start_date),
-      vacation_pay_schedule = COALESCE(?, vacation_pay_schedule)
+      vacation_pay_schedule = COALESCE(?, vacation_pay_schedule),
+      pay_type = CASE WHEN ? IS NULL THEN pay_type ELSE ? END,
+      annual_salary = CASE WHEN ? IS NULL THEN annual_salary ELSE ? END,
+      vacation_pay_pct = CASE WHEN ? IS NULL THEN vacation_pay_pct ELSE ? END,
+      phone = CASE WHEN ? IS NULL THEN phone ELSE ? END,
+      email = CASE WHEN ? IS NULL THEN email ELSE ? END,
+      sin = CASE WHEN ? IS NULL THEN sin ELSE ? END,
+      home_address = CASE WHEN ? IS NULL THEN home_address ELSE ? END,
+      hire_date = CASE WHEN ? IS NULL THEN hire_date ELSE ? END,
+      proserve_number = CASE WHEN ? IS NULL THEN proserve_number ELSE ? END,
+      proserve_expiry = CASE WHEN ? IS NULL THEN proserve_expiry ELSE ? END,
+      roe_last_day = CASE WHEN ? IS NULL THEN roe_last_day ELSE ? END,
+      roe_hours = CASE WHEN ? IS NULL THEN roe_hours ELSE ? END,
+      roe_wage = CASE WHEN ? IS NULL THEN roe_wage ELSE ? END,
+      benefits_note = CASE WHEN ? IS NULL THEN benefits_note ELSE ? END
     WHERE id = ?
     `,
   ).run(
@@ -605,6 +703,34 @@ function updateEmployeePayrollSettings({
     defaultPayFrequency,
     startDate,
     vacationPaySchedule,
+    payType === undefined ? null : payType,
+    payType === undefined ? null : payType,
+    annualSalary === undefined ? null : annualSalary,
+    annualSalary === undefined ? null : annualSalary,
+    vacationPayPct === undefined ? null : vacationPayPct,
+    vacationPayPct === undefined ? null : vacationPayPct,
+    phone === undefined ? null : phone,
+    phone === undefined ? null : phone,
+    email === undefined ? null : email,
+    email === undefined ? null : email,
+    sin === undefined ? null : sin,
+    sin === undefined ? null : sin,
+    homeAddress === undefined ? null : homeAddress,
+    homeAddress === undefined ? null : homeAddress,
+    hireDate === undefined ? null : hireDate,
+    hireDate === undefined ? null : hireDate,
+    proserveNumber === undefined ? null : proserveNumber,
+    proserveNumber === undefined ? null : proserveNumber,
+    proserveExpiry === undefined ? null : proserveExpiry,
+    proserveExpiry === undefined ? null : proserveExpiry,
+    roeLastDay === undefined ? null : roeLastDay,
+    roeLastDay === undefined ? null : roeLastDay,
+    roeHours === undefined ? null : roeHours,
+    roeHours === undefined ? null : roeHours,
+    roeWage === undefined ? null : roeWage,
+    roeWage === undefined ? null : roeWage,
+    benefitsNote === undefined ? null : benefitsNote,
+    benefitsNote === undefined ? null : benefitsNote,
     employeeId,
   );
 
@@ -638,6 +764,9 @@ function createEmployee({
   defaultPayFrequency = null,
   startDate,
   vacationPaySchedule = DEFAULT_VACATION_PAY_SCHEDULE,
+  payType = 'hourly',
+  annualSalary = null,
+  vacationPayPct = 4.0,
   adminUser = null,
 }) {
   const pinHash = hashPin(pin);
@@ -653,9 +782,12 @@ function createEmployee({
         default_pay_frequency,
         start_date,
         vacation_pay_schedule,
-        accrued_vacation_balance
+        accrued_vacation_balance,
+        pay_type,
+        annual_salary,
+        vacation_pay_pct
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -668,6 +800,9 @@ function createEmployee({
       startDate,
       vacationPaySchedule,
       0,
+      payType,
+      annualSalary,
+      vacationPayPct,
     );
 
   const employee = findEmployeeById(result.lastInsertRowid);
@@ -969,13 +1104,13 @@ function listPayrollAuditLogs(payrollId = null) {
   return listAuditLogs("payroll", payrollId);
 }
 
-function createAdminSession({ token, username, createdAt, expiresAt }) {
+function createAdminSession({ token, username, createdAt, expiresAt, adminUserId = null, userName = null }) {
   db.prepare(
     `
-    INSERT OR REPLACE INTO admin_sessions (token, username, created_at, expires_at)
-    VALUES (?, ?, ?, ?)
+    INSERT OR REPLACE INTO admin_sessions (token, username, created_at, expires_at, admin_user_id, user_name)
+    VALUES (?, ?, ?, ?, ?, ?)
     `,
-  ).run(token, username, createdAt, expiresAt);
+  ).run(token, username, createdAt, expiresAt, adminUserId, userName);
 
   return getAdminSession(token);
 }
@@ -984,7 +1119,7 @@ function getAdminSession(token) {
   return db
     .prepare(
       `
-      SELECT token, username, created_at, expires_at
+      SELECT token, username, created_at, expires_at, admin_user_id, user_name
       FROM admin_sessions
       WHERE token = ?
       `,
@@ -1962,55 +2097,66 @@ function getPayrollItems(payrollPeriodId) {
     .prepare(
       `
       SELECT
-        id,
-        payroll_period_id,
-        employee_id,
-        employee_name,
-        total_hours,
-        regular_hours,
-        overtime_hours,
-        hourly_rate,
-        regular_pay,
-        overtime_pay,
-        gross_pay,
-        gross_pay_total,
-        holiday_hours,
-        holiday_pay,
-        holiday_label,
-        vacation_rate,
-        vacation_pay,
-        vacation_payout,
-        vacation_accrued,
-        vacation_pay_schedule,
-        pay_date,
-        cheque_number,
-        wage_rate_label,
-        cpp_deduction,
-        cpp_employer,
-        cpp2_deduction,
-        ei_deduction,
-        ei_employer,
-        federal_tax,
-        provincial_tax,
-        total_deductions,
-        net_pay,
-        country,
-        province,
-        tax_year,
-        pay_frequency,
-        pay_periods_per_year,
-        pensionable_earnings,
-        insurable_earnings,
-        ytd_cpp,
-        ytd_cpp2,
-        ytd_ei,
-        ytd_federal_tax,
-        ytd_provincial_tax,
-        created_at,
-        updated_at
-      FROM payroll_items
-      WHERE payroll_period_id = ?
-      ORDER BY employee_name ASC
+        pi.id,
+        pi.payroll_period_id,
+        pi.employee_id,
+        pi.employee_name,
+        pi.total_hours,
+        pi.regular_hours,
+        pi.overtime_hours,
+        pi.hourly_rate,
+        pi.regular_pay,
+        pi.overtime_pay,
+        pi.gross_pay,
+        pi.gross_pay_total,
+        pi.holiday_hours,
+        pi.holiday_pay,
+        pi.holiday_label,
+        pi.vacation_rate,
+        pi.vacation_pay,
+        pi.vacation_payout,
+        pi.vacation_accrued,
+        pi.vacation_pay_schedule,
+        pi.pay_date,
+        pi.cheque_number,
+        pi.wage_rate_label,
+        pi.cpp_deduction,
+        pi.cpp_employer,
+        pi.cpp2_deduction,
+        pi.ei_deduction,
+        pi.ei_employer,
+        pi.federal_tax,
+        pi.provincial_tax,
+        pi.total_deductions,
+        pi.net_pay,
+        pi.country,
+        pi.province,
+        pi.tax_year,
+        pi.pay_frequency,
+        pi.pay_periods_per_year,
+        pi.pensionable_earnings,
+        pi.insurable_earnings,
+        pi.ytd_cpp,
+        pi.ytd_cpp2,
+        pi.ytd_ei,
+        pi.ytd_federal_tax,
+        pi.ytd_provincial_tax,
+        pi.pay_type,
+        pi.salary_base,
+        pi.salary_vacation_pay,
+        pi.salary_bonus,
+        pi.vacation_pay_pct,
+        pi.send_status,
+        pi.sent_at,
+        pi.payment_reference,
+        pi.created_at,
+        pi.updated_at,
+        e.email AS employee_email,
+        e.benefits_note AS benefits_note
+      FROM payroll_items pi
+      LEFT JOIN employees e ON e.id = pi.employee_id
+      WHERE pi.payroll_period_id = ?
+      ORDER BY pi.employee_name ASC
       `,
     )
     .all(payrollPeriodId)
@@ -2069,6 +2215,12 @@ function getPayrollItems(payrollPeriodId) {
       ytd_ei: Number(item.ytd_ei || 0),
       ytd_federal_tax: Number(item.ytd_federal_tax || 0),
       ytd_provincial_tax: Number(item.ytd_provincial_tax || 0),
+      pay_type: item.pay_type || 'hourly',
+      salary_base: Number(item.salary_base || 0),
+      salary_vacation_pay: Number(item.salary_vacation_pay || 0),
+      salary_bonus: Number(item.salary_bonus || 0),
+      vacation_pay_pct: Number(item.vacation_pay_pct ?? 4),
+      benefits_note: item.benefits_note || null,
     }));
 }
 
@@ -2204,9 +2356,58 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
     return null;
   }
 
-  const totalEarnings = roundMoney(
-    item.gross_pay + item.vacation_payout + item.holiday_pay,
-  );
+  const isSalaried = item.pay_type === 'salaried';
+
+  let totalEarnings;
+  let header;
+  let earnings;
+
+  if (isSalaried) {
+    totalEarnings = roundMoney(item.gross_pay_total);
+    header = {
+      employee: item.employee_name,
+      pay_period: `${payroll.start_date} to ${payroll.end_date}`,
+      wage_rate: `Monthly Salary: $${roundMoney(item.salary_base).toFixed(2)}`,
+      wage_rate_label: "Monthly Salary",
+      wage_rate_value: roundMoney(item.salary_base),
+      pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
+      payment_reference: item.cheque_number || null,
+      cheque_no: item.cheque_number || null,
+      total_hours: 0,
+    };
+    earnings = {
+      regular_earnings: roundMoney(item.salary_base),
+      vacation_pay: roundMoney(item.salary_vacation_pay),
+      extra_pay: roundMoney(item.salary_bonus),
+      extra_pay_label: "Bonus",
+      total_earnings: totalEarnings,
+      accrued_vacation: 0,
+    };
+  } else {
+    totalEarnings = roundMoney(
+      item.gross_pay + item.vacation_payout + item.holiday_pay,
+    );
+    header = {
+      employee: item.employee_name,
+      pay_period: `${payroll.start_date} to ${payroll.end_date}`,
+      wage_rate: `${item.wage_rate_label || payroll.wage_rate_label || "Hourly rate"}: $${item.hourly_rate.toFixed(2)}`,
+      wage_rate_label: item.wage_rate_label || payroll.wage_rate_label || "Hourly rate",
+      wage_rate_value: item.hourly_rate,
+      pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
+      payment_reference: item.cheque_number || null,
+      cheque_no: item.cheque_number || null,
+      total_hours: Number(item.total_hours || 0),
+    };
+    earnings = {
+      regular_earnings: roundMoney(item.gross_pay),
+      vacation_pay: roundMoney(item.vacation_payout),
+      extra_pay: roundMoney(item.holiday_pay),
+      extra_pay_label: item.holiday_label || "Holiday Pay",
+      total_earnings: totalEarnings,
+      accrued_vacation: roundMoney(item.vacation_accrued),
+    };
+  }
+
   const totalDeductions = roundMoney(
     item.federal_tax +
       item.provincial_tax +
@@ -2220,30 +2421,16 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
     payroll_item_id: item.id,
     employee_id: item.employee_id,
     employee_name: item.employee_name,
+    benefits_note: item.benefits_note || null,
+    pay_type: item.pay_type || 'hourly',
     pay_period: {
       start_date: payroll.start_date,
       end_date: payroll.end_date,
       pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
       status: payroll.status,
     },
-    header: {
-      employee: item.employee_name,
-      pay_period: `${payroll.start_date} to ${payroll.end_date}`,
-      wage_rate: `${item.wage_rate_label || payroll.wage_rate_label || "Hourly rate"}: $${item.hourly_rate.toFixed(2)}`,
-      wage_rate_label: item.wage_rate_label || payroll.wage_rate_label || "Hourly rate",
-      wage_rate_value: item.hourly_rate,
-      pay_date: item.pay_date || payroll.pay_date || payroll.end_date,
-      payment_reference: item.cheque_number || null,
-      cheque_no: item.cheque_number || null,
-    },
-    earnings: {
-      regular_earnings: roundMoney(item.gross_pay),
-      vacation_pay: roundMoney(item.vacation_payout),
-      extra_pay: roundMoney(item.holiday_pay),
-      extra_pay_label: item.holiday_label || "Holiday Pay",
-      total_earnings: totalEarnings,
-      accrued_vacation: roundMoney(item.vacation_accrued),
-    },
+    header,
+    earnings,
     deductions: {
       federal_tax: roundMoney(item.federal_tax),
       provincial_tax: roundMoney(item.provincial_tax),
@@ -2265,6 +2452,7 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
     },
     raw: {
       gross_pay: roundMoney(item.gross_pay),
+      vacation_rate: Number(item.vacation_rate || 0),
       vacation_pay: roundMoney(item.vacation_pay),
       vacation_payout: roundMoney(item.vacation_payout),
       vacation_accrued: roundMoney(item.vacation_accrued),
@@ -2278,6 +2466,11 @@ function getPayrollPayslip(payrollPeriodId, payrollItemId) {
       ei_employer: roundMoney(item.ei_employer),
       total_deductions: roundMoney(item.total_deductions),
       net_pay: roundMoney(item.net_pay),
+      pay_type: item.pay_type || 'hourly',
+      vacation_pay_pct: item.vacation_pay_pct ?? 4,
+      salary_base: roundMoney(item.salary_base || 0),
+      salary_vacation_pay: roundMoney(item.salary_vacation_pay || 0),
+      salary_bonus: roundMoney(item.salary_bonus || 0),
     },
   };
 }
@@ -2340,6 +2533,7 @@ function generatePayroll({
   defaultHourlyRate = null,
   hourlyRatesByEmployee = {},
   holidayAdjustmentsByEmployee = {},
+  salariedBonusByEmployee = {},
   allowApprovedRebuild = false,
   auditAction = "generated",
   adminUser = null,
@@ -2378,12 +2572,12 @@ function generatePayroll({
       settings: findEmployeeById(employee.employee_id),
     }));
 
-  const payFrequencyConfig = getPayFrequencyConfig(
-    resolvePayrollPayFrequency(
-      payFrequency,
-      employees.map((employee) => employee.settings || {}),
-    ),
-  );
+  const payFrequencyConfig = employees.length > 0
+    ? getPayFrequencyConfig(resolvePayrollPayFrequency(
+        payFrequency,
+        employees.map((employee) => employee.settings || {}),
+      ))
+    : getPayFrequencyConfig(payFrequency || DEFAULT_PAY_FREQUENCY);
 
   const timestamp = new Date().toISOString();
   const resolvedPayDate = payDate || endDate;
@@ -2656,6 +2850,113 @@ function generatePayroll({
       );
     });
 
+    // NEW: salaried employees — additive, no changes to hourly logic above
+    const activeSalariedEmployees = listActiveSalariedEmployees();
+
+    const insertSalariedItem = db.prepare(`
+      INSERT INTO payroll_items (
+        payroll_period_id, employee_id, employee_name,
+        total_hours, regular_hours, overtime_hours,
+        hourly_rate, regular_pay, overtime_pay,
+        gross_pay, gross_pay_total,
+        holiday_hours, holiday_pay, holiday_label,
+        vacation_rate, vacation_pay, vacation_payout, vacation_accrued,
+        vacation_pay_schedule,
+        pay_date, cheque_number, wage_rate_label,
+        cpp_deduction, cpp_employer, cpp2_deduction,
+        ei_deduction, ei_employer,
+        federal_tax, provincial_tax,
+        total_deductions, net_pay,
+        country, province, tax_year,
+        pay_frequency, pay_periods_per_year,
+        pensionable_earnings, insurable_earnings,
+        ytd_cpp, ytd_cpp2, ytd_ei,
+        ytd_federal_tax, ytd_provincial_tax,
+        pay_type, salary_base, salary_vacation_pay, salary_bonus, vacation_pay_pct,
+        created_at, updated_at
+      ) VALUES (
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?, ?, ?,
+        ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?
+      )
+    `);
+
+    activeSalariedEmployees.forEach((emp, sIdx) => {
+      const salaryBase = roundMoney((emp.annual_salary || 0) / 12);
+      const vacation = calculateVacationPayForEmployee({
+        startDate: emp.start_date,
+        payrollEndDate: endDate,
+        vacationPaySchedule: "monthly",
+        baseGrossPay: salaryBase,
+      });
+      const vacPct = Number((vacation.vacation_rate * 100).toFixed(2));
+      const vacPay = vacation.vacation_pay;
+      const bonus = roundMoney(Number(salariedBonusByEmployee[emp.id] || 0));
+      const grossPayTotal = roundMoney(salaryBase + vacPay + bonus);
+
+      const ytd = getApprovedPayrollYtdForEmployee({
+        employeeId: emp.id,
+        taxYear,
+        country,
+        province,
+        periodStartDate: startDate,
+        excludePayrollPeriodId: payrollPeriodId,
+      });
+
+      const deductions = calculateAlbertaPayrollDeductions2026({
+        grossPayTotal,
+        payFrequency: 'monthly',
+        ytd,
+        federalClaimAmount: emp.federal_claim_amount,
+        provincialClaimAmount: emp.provincial_claim_amount,
+      });
+
+      const empContrib = calculateEmployerContributions({
+        cppEmployee: deductions.cpp_deduction + deductions.cpp2_deduction,
+        eiEmployee: deductions.ei_deduction,
+      });
+
+      const chequeNumber = buildChequeNumber(resolvedChequePrefix, employees.length + sIdx);
+
+      insertSalariedItem.run(
+        payrollPeriodId, emp.id, emp.name,
+        0, 0, 0,
+        0, 0, 0,
+        salaryBase, grossPayTotal,
+        0, 0, null,
+        vacPct / 100, vacPay, vacPay, 0,
+        'monthly',
+        resolvedPayDate, chequeNumber, 'Monthly Salary',
+        deductions.cpp_deduction, empContrib.cpp_employer, deductions.cpp2_deduction,
+        deductions.ei_deduction, empContrib.ei_employer,
+        deductions.federal_tax, deductions.provincial_tax,
+        deductions.total_deductions, deductions.net_pay,
+        deductions.country, deductions.province, deductions.tax_year,
+        deductions.pay_frequency, deductions.pay_periods_per_year,
+        deductions.pensionable_earnings, deductions.insurable_earnings,
+        deductions.ytd_cpp, deductions.ytd_cpp2, deductions.ytd_ei,
+        deductions.ytd_federal_tax, deductions.ytd_provincial_tax,
+        'salaried', salaryBase, vacPay, bonus, vacPct,
+        timestamp, timestamp,
+      );
+    });
+
     if (existingPeriod?.status === "approved" && allowApprovedRebuild) {
       const employeeIds = new Set([
         ...previousAccruedByEmployee.keys(),
@@ -2719,22 +3020,104 @@ function recalculatePayroll(
     province: payroll.province || PAYROLL_PROVINCE,
     payFrequency: payroll.pay_frequency || null,
     hourlyRatesByEmployee: Object.fromEntries(
-      payroll.items.map((item) => [item.employee_id, item.hourly_rate]),
+      payroll.items
+        .filter((i) => i.pay_type !== 'salaried')
+        .map((item) => [item.employee_id, item.hourly_rate]),
     ),
     holidayAdjustmentsByEmployee: Object.fromEntries(
-      payroll.items.map((item) => [
-        item.employee_id,
-        {
-          holidayPay: (item.holiday_hours || 0) > 0 ? null : item.holiday_pay || 0,
-          holidayHours: item.holiday_hours || 0,
-          holidayLabel: item.holiday_label || null,
-        },
-      ]),
+      payroll.items
+        .filter((i) => i.pay_type !== 'salaried')
+        .map((item) => [
+          item.employee_id,
+          {
+            holidayPay: (item.holiday_hours || 0) > 0 ? null : item.holiday_pay || 0,
+            holidayHours: item.holiday_hours || 0,
+            holidayLabel: item.holiday_label || null,
+          },
+        ]),
+    ),
+    salariedBonusByEmployee: Object.fromEntries(
+      payroll.items
+        .filter((i) => i.pay_type === 'salaried')
+        .map((i) => [i.employee_id, i.salary_bonus || 0]),
     ),
     allowApprovedRebuild,
     auditAction: "recalculated",
     adminUser,
   });
+}
+
+function updateSalariedItemBonus({ payrollPeriodId, payrollItemId, bonus, adminUser = null }) {
+  const payroll = getPayrollDetails(payrollPeriodId);
+  if (!payroll) {
+    const error = new Error("Payroll not found.");
+    error.code = "PAYROLL_NOT_FOUND";
+    throw error;
+  }
+  if (payroll.status === 'approved') {
+    const error = new Error("Payroll aprovado nao pode ser alterado.");
+    error.code = "PAYROLL_APPROVED";
+    throw error;
+  }
+  const item = payroll.items.find((i) => i.id === payrollItemId);
+  if (!item || item.pay_type !== 'salaried') return null;
+
+  const salaryBase = roundMoney(item.salary_base);
+  const vacPay = roundMoney(item.salary_vacation_pay);
+  const normalizedBonus = roundMoney(Number(bonus || 0));
+  const grossPayTotal = roundMoney(salaryBase + vacPay + normalizedBonus);
+
+  const ytd = getApprovedPayrollYtdForEmployee({
+    employeeId: item.employee_id,
+    taxYear: payroll.tax_year,
+    country: payroll.country,
+    province: payroll.province,
+    periodStartDate: payroll.start_date,
+    excludePayrollPeriodId: payrollPeriodId,
+  });
+
+  const emp = findEmployeeById(item.employee_id);
+  const deductions = calculateAlbertaPayrollDeductions2026({
+    grossPayTotal,
+    payFrequency: 'monthly',
+    ytd,
+    federalClaimAmount: emp?.federal_claim_amount,
+    provincialClaimAmount: emp?.provincial_claim_amount,
+  });
+  const empContrib = calculateEmployerContributions({
+    cppEmployee: deductions.cpp_deduction + deductions.cpp2_deduction,
+    eiEmployee: deductions.ei_deduction,
+  });
+
+  db.prepare(`
+    UPDATE payroll_items
+    SET salary_bonus = ?, gross_pay_total = ?,
+        cpp_deduction = ?, cpp_employer = ?, cpp2_deduction = ?,
+        ei_deduction = ?, ei_employer = ?,
+        federal_tax = ?, provincial_tax = ?,
+        total_deductions = ?, net_pay = ?,
+        pensionable_earnings = ?, insurable_earnings = ?,
+        ytd_cpp = ?, ytd_cpp2 = ?, ytd_ei = ?,
+        ytd_federal_tax = ?, ytd_provincial_tax = ?,
+        updated_at = ?
+    WHERE id = ? AND payroll_period_id = ?
+  `).run(
+    normalizedBonus, grossPayTotal,
+    deductions.cpp_deduction, empContrib.cpp_employer, deductions.cpp2_deduction,
+    deductions.ei_deduction, empContrib.ei_employer,
+    deductions.federal_tax, deductions.provincial_tax,
+    deductions.total_deductions, deductions.net_pay,
+    deductions.pensionable_earnings, deductions.insurable_earnings,
+    deductions.ytd_cpp, deductions.ytd_cpp2, deductions.ytd_ei,
+    deductions.ytd_federal_tax, deductions.ytd_provincial_tax,
+    new Date().toISOString(),
+    payrollItemId, payrollPeriodId,
+  );
+
+  db.prepare(`UPDATE payroll_periods SET updated_at = ? WHERE id = ?`)
+    .run(new Date().toISOString(), payrollPeriodId);
+
+  return getPayrollDetails(payrollPeriodId);
 }
 
 function approvePayroll(payrollPeriodId, adminUser = null) {
@@ -3091,7 +3474,123 @@ function calculatePayrollHours({ startDate, endDate }) {
   });
 }
 
+function createAdminUser({ name, email, passwordHash, role = "super_admin" }) {
+  const now = new Date().toISOString();
+  return db.prepare(`INSERT INTO admin_users (name, email, password_hash, role, active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)`).run(name, email, passwordHash, role, now, now);
+}
+
+function findAdminUserByEmail(email) {
+  return db.prepare(`SELECT * FROM admin_users WHERE email = ? AND active = 1`).get(email);
+}
+
+function findAdminUserById(id) {
+  return db.prepare(`SELECT * FROM admin_users WHERE id = ?`).get(id);
+}
+
+function listAdminUsers() {
+  return db.prepare(`SELECT id, name, email, role, active, created_at FROM admin_users ORDER BY id ASC`).all();
+}
+
+function countAdminUsers() {
+  return db.prepare(`SELECT COUNT(*) as count FROM admin_users WHERE active = 1`).get().count;
+}
+
+function updateAdminUser(id, { name }) {
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE admin_users SET name = ?, updated_at = ? WHERE id = ?`).run(name, now, id);
+}
+
+function updateAdminUserPassword(id, passwordHash) {
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE admin_users SET password_hash = ?, updated_at = ? WHERE id = ?`).run(passwordHash, now, id);
+}
+
+function deactivateAdminUser(id) {
+  db.prepare(`UPDATE admin_users SET active = 0, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+}
+
+function reactivateAdminUser(id) {
+  db.prepare(`UPDATE admin_users SET active = 1, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+}
+
+function getClockStats() {
+  const todayLocal = new Date().toLocaleDateString("en-CA", { timeZone: "America/Edmonton" });
+  const todayStart = `${todayLocal}T00:00:00`;
+  const todayEnd = `${todayLocal}T23:59:59`;
+
+  const currentlyWorkingRows = db.prepare(`
+    SELECT DISTINCT tr.employee_id, e.name as employee_name
+    FROM time_records tr
+    JOIN employees e ON e.id = tr.employee_id
+    WHERE tr.deleted_at IS NULL
+      AND tr.recorded_at >= ? AND tr.recorded_at <= ?
+      AND tr.type = 'check-in'
+      AND NOT EXISTS (
+        SELECT 1 FROM time_records tr2
+        WHERE tr2.employee_id = tr.employee_id
+          AND tr2.type = 'check-out'
+          AND tr2.deleted_at IS NULL
+          AND tr2.recorded_at > tr.recorded_at
+          AND tr2.recorded_at >= ? AND tr2.recorded_at <= ?
+      )
+  `).all(todayStart, todayEnd, todayStart, todayEnd);
+
+  const allOpenRows = db.prepare(`
+    SELECT COUNT(DISTINCT employee_id) as count
+    FROM (
+      SELECT employee_id, MAX(recorded_at) as last_record, type
+      FROM time_records
+      WHERE deleted_at IS NULL
+      GROUP BY employee_id
+      HAVING type = 'check-in'
+    )
+  `).get();
+
+  const lastEvent = db.prepare(`
+    SELECT tr.type as entry_type, tr.recorded_at, e.name as employee_name
+    FROM time_records tr
+    JOIN employees e ON e.id = tr.employee_id
+    WHERE tr.deleted_at IS NULL
+    ORDER BY tr.recorded_at DESC
+    LIMIT 1
+  `).get();
+
+  return {
+    currentlyWorking: currentlyWorkingRows.length,
+    allOpen: allOpenRows?.count || 0,
+    lastEvent: lastEvent || null,
+  };
+}
+
+function updatePayrollItemCheque(itemId, { paymentReference, sendStatus }) {
+  db.prepare(`UPDATE payroll_items SET payment_reference = ?, send_status = ?, updated_at = ? WHERE id = ?`)
+    .run(paymentReference, sendStatus || 'ready', new Date().toISOString(), itemId);
+}
+
+function markPayrollItemSent(itemId) {
+  const now = new Date().toISOString();
+  db.prepare(`UPDATE payroll_items SET send_status = 'sent', sent_at = ?, updated_at = ? WHERE id = ?`)
+    .run(now, now, itemId);
+}
+
+function getPayrollItemById(itemId) {
+  return db.prepare(`SELECT pi.*, e.name as employee_name, e.email as employee_email FROM payroll_items pi LEFT JOIN employees e ON e.id = pi.employee_id WHERE pi.id = ?`).get(itemId);
+}
+
 module.exports = {
+  createAdminUser,
+  findAdminUserByEmail,
+  findAdminUserById,
+  listAdminUsers,
+  countAdminUsers,
+  updateAdminUser,
+  updateAdminUserPassword,
+  deactivateAdminUser,
+  reactivateAdminUser,
+  getClockStats,
+  updatePayrollItemCheque,
+  markPayrollItemSent,
+  getPayrollItemById,
   initializeDatabase,
   listEmployees,
   listAdminEmployees,
@@ -3133,6 +3632,8 @@ module.exports = {
   recalculatePayroll,
   approvePayroll,
   updatePayrollItemHoliday,
+  listActiveSalariedEmployees,
+  updateSalariedItemBonus,
   PAYROLL_OVERTIME_RULE,
   HOLIDAY_PAY_RULE,
   VACATION_PAY_RULE,

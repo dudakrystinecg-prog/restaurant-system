@@ -20,3 +20,16 @@ coverage/
 # OS/editor noise
 .DS_Store
 Thumbs.db
+
+# Build output
+build/
+dist/
+
+# Claude internal
+.claude/
+
+# Temp / debug / local-only files
+tmp/
+UsersHPDesktopfigma-cli/
+fix-encoding.js
+fix-encoding2.js

@@ -12,17 +12,36 @@
   padding: 20px 24px 12px;
 }
 
+.payslip-sheet__brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.payslip-sheet__logo {
+  width: auto;
+  height: 52px;
+  flex: 0 0 auto;
+}
+
 .payslip-sheet__title {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: #111111;
 }
 
+.payslip-sheet__address {
+  margin: 2px 0 0;
+  color: #4b5563;
+  font-size: 0.78rem;
+}
+
 .payslip-sheet__subtitle {
   margin: 4px 0 0;
-  color: #4b5563;
-  font-size: 0.9rem;
+  color: #111111;
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .payslip-meta-table,
@@ -71,10 +90,15 @@
   font-size: 0.75rem;
 }
 
-.payslip-statement-table th:last-child,
-.payslip-statement-table td:last-child {
+.payslip-statement-table__amount {
   text-align: right;
-  width: 180px;
+  width: 160px;
+}
+
+.payslip-statement-table__benefits {
+  width: 260px;
+  white-space: pre-line;
+  text-align: left;
 }
 
 .payslip-section-row td {
@@ -107,6 +131,10 @@
 @media (max-width: 1100px) {
   .payslip-sheet__header {
     flex-direction: column;
+  }
+
+  .payslip-sheet__brand {
+    align-items: flex-start;
   }
 
   .payslip-meta-table,
