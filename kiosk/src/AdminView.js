@@ -2048,6 +2048,7 @@ function AdminView() {
   const [liveTime, setLiveTime] = useState(new Date());
   const [selectedPayslip, setSelectedPayslip] = useState(null);
   const [isPayslipLoading, setIsPayslipLoading] = useState(false);
+  const [payslipTargetItemId, setPayslipTargetItemId] = useState(null);
   const [expandedPayrollItemId, setExpandedPayrollItemId] = useState(null);
 
   useEffect(() => {
@@ -2830,8 +2831,15 @@ function AdminView() {
   };
 
   const handleViewPayslip = async (payrollId, itemId) => {
+    if (payslipTargetItemId === itemId && selectedPayslip?.payroll_item_id === itemId) {
+      setSelectedPayslip(null);
+      setPayslipTargetItemId(null);
+      return;
+    }
     setError("");
     setIsPayslipLoading(true);
+    setPayslipTargetItemId(itemId);
+    setSelectedPayslip(null);
 
     try {
       const response = await adminFetch(
@@ -2851,6 +2859,7 @@ function AdminView() {
       });
     } catch (payslipError) {
       setError(payslipError.message || "Failed to load payslip.");
+      setPayslipTargetItemId(null);
     } finally {
       setIsPayslipLoading(false);
     }
@@ -4889,9 +4898,9 @@ function AdminView() {
                                     onClick={() => handleViewPayslip(selectedPayroll.id, item.id)}
                                     className="admin-button admin-button--secondary admin-button--compact"
                                   >
-                                    View payslip
+                                    {payslipTargetItemId === item.id && selectedPayslip?.payroll_item_id === item.id ? "Hide payslip" : "View payslip"}
                                   </button>
-                                  {selectedPayslip?.payroll_item_id === item.id ? (
+                                  {payslipTargetItemId === item.id && selectedPayslip?.payroll_item_id === item.id ? (
                                     <button
                                       onClick={handlePrintPayslip}
                                       className="admin-button admin-button--secondary admin-button--compact"
@@ -5183,24 +5192,24 @@ function AdminView() {
                                   </div>
                                 </div>
                               ) : null}
+
+                              {payslipTargetItemId === item.id ? (
+                                <div className="payroll-item-inline-payslip">
+                                  {isPayslipLoading ? (
+                                    <div className="admin-note">Loading payslip…</div>
+                                  ) : selectedPayslip?.payroll_item_id === item.id ? (
+                                    <PayslipPreview
+                                      payslip={selectedPayslip}
+                                      onPrint={handlePrintPayslip}
+                                      onClose={() => { setSelectedPayslip(null); setPayslipTargetItemId(null); }}
+                                    />
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           );
                         })}
                       </div>
-
-                      {isPayslipLoading ? (
-                        <div className="admin-note mt-6">Loading payslip...</div>
-                      ) : null}
-
-                      {selectedPayslip ? (
-                        <div className="mt-6">
-                          <PayslipPreview
-                            payslip={selectedPayslip}
-                            onPrint={handlePrintPayslip}
-                            onClose={() => setSelectedPayslip(null)}
-                          />
-                        </div>
-                      ) : null}
                     </>
                   ) : (
                     <div className="admin-empty-state">
