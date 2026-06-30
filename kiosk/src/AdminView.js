@@ -84,6 +84,65 @@ function buildHolidayInputState(items = []) {
   );
 }
 
+// ── Custom confirm modal — replaces all window.confirm/alert ─────────────────
+
+function ConfirmModal({ modal, onConfirm, onCancel }) {
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal, onCancel]);
+
+  if (!modal) return null;
+
+  const isDanger  = modal.variant === "danger";
+  const isWarning = modal.variant === "warning";
+  const btnClass  = isDanger  ? "admin-button admin-button--danger"
+                  : isWarning ? "admin-button admin-button--warning"
+                  :             "admin-button admin-button--primary";
+
+  return (
+    <div className="admin-modal-overlay" onClick={onCancel}>
+      <div className={`admin-modal admin-confirm-modal${isDanger ? " admin-confirm-modal--danger" : isWarning ? " admin-confirm-modal--warning" : ""}`} onClick={e => e.stopPropagation()}>
+        <h3 className="admin-modal__title">{modal.title}</h3>
+        {modal.message && <p className="admin-confirm-modal__message">{modal.message}</p>}
+        {modal.detail  && <div className="admin-confirm-modal__detail">{modal.detail}</div>}
+        <div className="admin-modal__actions">
+          <button className="admin-button admin-button--secondary admin-button--compact" onClick={onCancel}>Cancel</button>
+          <button className={`${btnClass} admin-button--compact`} onClick={onConfirm}>{modal.confirmLabel || "Confirm"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useConfirm() {
+  const [modal, setModal] = useState(null);
+  const resolveRef = useRef(null);
+
+  const askConfirm = useCallback(({ title, message, detail, confirmLabel, variant = "neutral" }) => {
+    return new Promise((resolve) => {
+      resolveRef.current = resolve;
+      setModal({ title, message, detail, confirmLabel, variant });
+    });
+  }, []);
+
+  const handleConfirm = useCallback(() => {
+    setModal(null);
+    resolveRef.current?.(true);
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    setModal(null);
+    resolveRef.current?.(false);
+  }, []);
+
+  return { modal, askConfirm, handleConfirm, handleCancel };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function getStoredAdminToken() {
   return window.localStorage.getItem(ADMIN_TOKEN_KEY) || "";
 }
@@ -1054,6 +1113,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   const [testEmailStatus, setTestEmailStatus] = useState("");
+  const { modal: confirmDlg, askConfirm, handleConfirm: dlgConfirm, handleCancel: dlgCancel } = useConfirm();
 
   const loadUsers = useCallback(async () => {
     const res = await adminFetch("/api/admin/users");
@@ -1098,7 +1158,8 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
   };
 
   const handleDeactivate = async (id) => {
-    if (!window.confirm("Deactivate this admin user?")) return;
+    const ok = await askConfirm({ title: "Deactivate admin user?", message: "This user will no longer be able to log in.", confirmLabel: "Deactivate", variant: "danger" });
+    if (!ok) return;
     const r = await adminFetch(`/api/admin/users/${id}/deactivate`, { method: "PUT" });
     if (r.ok) { showFeedback("User deactivated."); loadUsers(); }
   };
@@ -1262,6 +1323,7 @@ function SettingsView({ adminUser, adminFetch, onUserUpdated }) {
         </table>
       </div>
 
+      <ConfirmModal modal={confirmDlg} onConfirm={dlgConfirm} onCancel={dlgCancel} />
     </div>
   );
 }
@@ -1282,6 +1344,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
   const [albertaHolidayRows, setAlbertaHolidayRows] = useState([]);
   // confirmModal: null | { mode: "bulk", toSend: [] } | { mode: "single", item: {} }
   const [confirmModal, setConfirmModal] = useState(null);
+  const { modal: confirmDlg, askConfirm, handleConfirm: dlgConfirm, handleCancel: dlgCancel } = useConfirm();
 
   const approvedPayrolls = useMemo(
     () => (payrolls || [])
@@ -1367,9 +1430,12 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
         readyItems.some((item) => String(item.id) === String(row.payroll_item_id)),
       );
       if (hasAlbertaHolidayReviewConcern(readyHolidayRows, readyItems)) {
-        const confirmed = window.confirm(
-          "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
-        );
+        const confirmed = await askConfirm({
+          title: "Holiday pay differences",
+          message: "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet.",
+          confirmLabel: "Continue anyway",
+          variant: "warning",
+        });
         if (!confirmed) return;
       }
       const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items`, {
@@ -1436,9 +1502,12 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
     if (!item) return;
     const itemHolidayRows = getAlbertaRowsForPayrollItem(albertaHolidayRows, itemId);
     if (chequeVal && item.send_status !== "sent" && hasAlbertaHolidayReviewConcern(itemHolidayRows, [item])) {
-      const confirmed = window.confirm(
-        "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
-      );
+      const confirmed = await askConfirm({
+        title: "Holiday pay differences",
+        message: "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet.",
+        confirmLabel: "Continue anyway",
+        variant: "warning",
+      });
       if (!confirmed) return;
     }
     try {
@@ -1748,6 +1817,7 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
           </div>
         </div>
       )}
+      <ConfirmModal modal={confirmDlg} onConfirm={dlgConfirm} onCancel={dlgCancel} />
     </div>
   );
 }
@@ -2070,6 +2140,7 @@ function AdminView() {
   const [isPayslipLoading, setIsPayslipLoading] = useState(false);
   const [payslipTargetItemId, setPayslipTargetItemId] = useState(null);
   const [expandedPayrollItemId, setExpandedPayrollItemId] = useState(null);
+  const { modal: confirmDlg, askConfirm, handleConfirm: dlgConfirm, handleCancel: dlgCancel } = useConfirm();
 
   useEffect(() => {
     document.body.classList.add("admin-bg");
@@ -2517,7 +2588,7 @@ function AdminView() {
     const deleteLabel = record.entry_mode === "manual"
       ? `Delete the manual entry for ${record.employee_name} on ${toDateValue(record.recorded_at)}?`
       : `Delete the record for ${record.employee_name} at ${formatDateTime(record.recorded_at)}?`;
-    const confirmed = window.confirm(deleteLabel);
+    const confirmed = await askConfirm({ title: deleteLabel, confirmLabel: "Delete", variant: "danger" });
     if (!confirmed) return;
 
     setFeedback("");
@@ -2696,9 +2767,12 @@ function AdminView() {
   const handleApprovePayroll = async (payrollId) => {
     const payrollItems = selectedPayroll?.id === payrollId ? (selectedPayroll.items || []) : [];
     if (hasAlbertaHolidayReviewConcern(albertaHolidayRows, payrollItems)) {
-      const confirmed = window.confirm(
-        "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet. Continue anyway?",
-      );
+      const confirmed = await askConfirm({
+        title: "Holiday pay differences",
+        message: "General holiday pay differences exist. Alberta calculated values are not applied to payroll totals yet.",
+        confirmLabel: "Continue anyway",
+        variant: "warning",
+      });
       if (!confirmed) return;
     }
 
@@ -2720,10 +2794,14 @@ function AdminView() {
 
   const handleRecalculatePayroll = async (payroll) => {
     const isApproved = payroll.status === "approved";
-    const confirmationMessage = isApproved
-      ? "This payroll is approved. Recalculate it anyway and replace the stored values using the new overtime rule?"
-      : "Recalculate this draft payroll using the new overtime rule?";
-    const confirmed = window.confirm(confirmationMessage);
+    const confirmed = await askConfirm({
+      title: isApproved ? "Recalculate approved payroll?" : "Recalculate payroll?",
+      message: isApproved
+        ? "This payroll is approved. Recalculate it anyway and replace the stored values?"
+        : "Recalculate this draft payroll with the current settings?",
+      confirmLabel: "Recalculate",
+      variant: isApproved ? "warning" : "neutral",
+    });
 
     if (!confirmed) {
       return;
@@ -3017,13 +3095,14 @@ function AdminView() {
   };
 
   const handleDeleteEmployee = async (employee) => {
-    const dependencyMessage = employee.can_delete
-      ? "This permanently deletes the employee profile. This cannot be undone."
-      : "This employee already has time records or payroll history, so permanent deletion is blocked. Hide the employee instead.";
-
-    const confirmed = window.confirm(
-      `Delete ${employee.name} permanently?\n\n${dependencyMessage}`,
-    );
+    const confirmed = await askConfirm({
+      title: `Delete ${employee.name} permanently?`,
+      message: employee.can_delete
+        ? "This permanently deletes the employee profile. This cannot be undone."
+        : "This employee already has time records or payroll history, so permanent deletion is blocked. Hide the employee instead.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
 
     if (!confirmed) {
       return;
@@ -5660,6 +5739,7 @@ function AdminView() {
         ) : null}
         </div>
       </main>
+      <ConfirmModal modal={confirmDlg} onConfirm={dlgConfirm} onCancel={dlgCancel} />
     </div>
   );
 }

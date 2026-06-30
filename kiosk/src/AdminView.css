@@ -4740,6 +4740,56 @@ textarea {
   }
 }
 
+/* ── Custom confirm modal variants ──────────────────────────── */
+
+.admin-confirm-modal {
+  border-top: 4px solid transparent;
+}
+
+.admin-confirm-modal--danger {
+  border-top-color: var(--c-red, #d71920);
+}
+
+.admin-confirm-modal--warning {
+  border-top-color: #e07b00;
+}
+
+.admin-confirm-modal__message {
+  font-size: 0.88rem;
+  color: var(--c-text-muted, #555);
+  margin: 0.25rem 0 1.25rem;
+  line-height: 1.5;
+}
+
+.admin-confirm-modal__detail {
+  background: rgba(26, 8, 8, 0.05);
+  border: 1px solid rgba(26, 8, 8, 0.10);
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.82rem;
+  color: var(--c-text-muted, #555);
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+}
+
+.admin-button--danger {
+  background: var(--c-red, #d71920);
+  color: #fff;
+  border: none;
+}
+.admin-button--danger:hover:not(:disabled) {
+  background: #b8141a;
+}
+
+.admin-button--warning {
+  background: #e07b00;
+  color: #fff;
+  border: none;
+}
+.admin-button--warning:hover:not(:disabled) {
+  background: #c06a00;
+}
+
 /* ── Phase 6 UI: Admin Clock page redesign ───────────────────── */
 
 /* Pagination + action toolbar */
