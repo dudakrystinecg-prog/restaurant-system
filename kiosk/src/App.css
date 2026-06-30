@@ -606,3 +606,139 @@
   color: rgba(255, 255, 255, 0.65);
   border-color: rgba(255, 255, 255, 0.25);
 }
+
+/* ── Phase 5 UI: Foreground elevation & clarity ─────────────────────────────
+   BACKGROUND / WEATHER CLASSES ARE NOT TOUCHED.
+   Only foreground card, step rail, employee grid, pin pad, action panel.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Main content card — stronger glass separation from background */
+.kiosk-main-card {
+  border-color: rgba(255, 255, 255, 0.11);
+  backdrop-filter: blur(34px);
+  box-shadow:
+    0 40px 90px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Step rail — inactive pills more legible, active pill with gold left accent */
+.kiosk-step-pill {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.98rem;
+  border-color: rgba(255, 255, 255, 0.11);
+}
+
+.kiosk-step-pill.is-active {
+  border-left: 3px solid rgba(200, 168, 112, 0.65);
+  background: linear-gradient(135deg, rgba(134, 26, 18, 0.82), rgba(175, 42, 28, 0.55));
+  color: #fff6f3;
+  border-color: rgba(255, 209, 197, 0.32);
+}
+
+/* Selected employee — contained box so it doesn't float */
+.kiosk-selected-employee {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.85rem 1.5rem;
+}
+
+.kiosk-selected-label {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+/* Employee cards — avatar initial circle via ::before */
+.kiosk-employee-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border-color: rgba(255, 180, 180, 0.18);
+  backdrop-filter: blur(28px);
+}
+
+.kiosk-employee-card::before {
+  content: attr(data-initial);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  background: rgba(200, 168, 112, 0.18);
+  border: 1px solid rgba(200, 168, 112, 0.28);
+  color: rgba(200, 168, 112, 0.95);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  flex-shrink: 0;
+}
+
+.kiosk-employee-name {
+  font-size: 1.6rem;
+}
+
+/* PIN confirmation line */
+.kiosk-pin-for {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.62);
+  margin: 0 0 0.25rem;
+  letter-spacing: 0.01em;
+}
+
+.kiosk-pin-for strong {
+  color: rgba(255, 246, 243, 0.92);
+  font-weight: 700;
+}
+
+/* Action panel — Check-out gets clear distinction from Check-in */
+.kiosk-action-button {
+  font-size: 1.9rem;
+  font-weight: 700;
+}
+
+.kiosk-action-button:not(.is-primary) {
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff8f6;
+}
+
+.kiosk-action-button:not(.is-primary):hover,
+.kiosk-action-button:not(.is-primary):focus-visible {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.11);
+}
+
+/* Back link — give it a subtle border so it reads as a control */
+.kiosk-action-link {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.75rem;
+  color: rgba(255, 255, 255, 0.82);
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.kiosk-action-link:hover,
+.kiosk-action-link:focus-visible {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+/* Success notice — larger, more prominent */
+.kiosk-status-notice.is-success {
+  border-color: rgba(142, 255, 212, 0.32);
+  background: rgba(18, 100, 68, 0.38);
+  color: #c8fff0;
+  font-size: 1.25rem;
+  padding: 1.25rem 1.5rem;
+}
+
+/* Error notice — slightly more readable */
+.kiosk-status-notice.is-error {
+  border-color: rgba(255, 143, 143, 0.36);
+  background: rgba(120, 20, 20, 0.4);
+  color: #ffe0e0;
+}
+
+/* ── End Phase 5 ──────────────────────────────────────────────────────────── */

@@ -182,6 +182,7 @@ function EmployeeGrid({ employees, onSelect }) {
           key={employee.id}
           onClick={() => onSelect(employee)}
           className="kiosk-employee-card"
+          data-initial={employee.name.charAt(0).toUpperCase()}
         >
           <span className="kiosk-employee-name">{employee.name}</span>
         </button>
@@ -190,11 +191,14 @@ function EmployeeGrid({ employees, onSelect }) {
   );
 }
 
-function PinPad({ pin, onDigit, onBack, onDelete }) {
+function PinPad({ pin, onDigit, onBack, onDelete, employeeName }) {
   const buttons = [1, 2, 3, 4, 5, 6, 7, 8, 9, "Back", 0, "Delete"];
 
   return (
     <div className="kiosk-flow-content">
+      {employeeName ? (
+        <p className="kiosk-pin-for">PIN for <strong>{employeeName}</strong></p>
+      ) : null}
       <div className="kiosk-pin-display">{(pin || "  ").replace(/./g, "•")}</div>
       <div className="kiosk-keypad-grid">
         {buttons.map((button) => (
@@ -469,6 +473,7 @@ function KioskView() {
       return (
         <PinPad
           pin={pin}
+          employeeName={selectedEmployee?.name}
           onDigit={(value) => {
             vibrate();
             handlePinInput(value);
