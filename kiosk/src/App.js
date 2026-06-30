@@ -2,6 +2,60 @@ import { useEffect, useMemo, useState } from "react";
 import AdminView from "./AdminView";
 import "./App.css";
 
+// ── Web Audio feedback ──────────────────────────────────────────────────────
+let _audioCtx = null;
+function getAudioCtx() {
+  try {
+    if (!_audioCtx) {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return _audioCtx;
+  } catch {
+    return null;
+  }
+}
+
+function playSound(type) {
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+
+    if (type === "click") {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.06);
+      gain.gain.setValueAtTime(0.07, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+      osc.start(t);
+      osc.stop(t + 0.08);
+    } else if (type === "success-in" || type === "success-out") {
+      const freqs = type === "success-in" ? [523, 659, 784] : [659, 784, 523];
+      freqs.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const s = t + i * 0.1;
+        gain.gain.setValueAtTime(0, s);
+        gain.gain.linearRampToValueAtTime(0.055, s + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, s + 0.32);
+        osc.start(s);
+        osc.stop(s + 0.36);
+      });
+    }
+  } catch {
+    // audio blocked or unavailable — continue silently
+  }
+}
+// ── End Web Audio ───────────────────────────────────────────────────────────
+
 const API_BASE_URL = "/api";
 const TZ = "America/Edmonton"; // Banff, Alberta — Mountain Time
 const WEATHER_URL =
@@ -180,9 +234,8 @@ function EmployeeGrid({ employees, onSelect }) {
       {employees.map((employee) => (
         <button
           key={employee.id}
-          onClick={() => onSelect(employee)}
+          onClick={() => { playSound("click"); onSelect(employee); }}
           className="kiosk-employee-card"
-          data-initial={employee.name.charAt(0).toUpperCase()}
         >
           <span className="kiosk-employee-name">{employee.name}</span>
         </button>
@@ -205,16 +258,15 @@ function PinPad({ pin, onDigit, onBack, onDelete, employeeName }) {
           <button
             key={button}
             onClick={() => {
+              playSound("click");
               if (button === "Back") {
                 onBack();
                 return;
               }
-
               if (button === "Delete") {
                 onDelete();
                 return;
               }
-
               onDigit(String(button));
             }}
             className={`kiosk-keypad-button ${typeof button === "string" ? "is-secondary" : ""}`}
@@ -230,15 +282,42 @@ function PinPad({ pin, onDigit, onBack, onDelete, employeeName }) {
 function ActionPanel({ onCheckIn, onCheckOut, onBack }) {
   return (
     <div className="kiosk-flow-content">
-      <button onClick={onCheckIn} className="kiosk-action-button is-primary">
+      <button
+        onClick={() => { playSound("click"); onCheckIn(); }}
+        className="kiosk-action-button is-checkin"
+      >
         Check-in
       </button>
-      <button onClick={onCheckOut} className="kiosk-action-button">
+      <button
+        onClick={() => { playSound("click"); onCheckOut(); }}
+        className="kiosk-action-button is-checkout"
+      >
         Check-out
       </button>
       <button onClick={onBack} className="kiosk-action-link">
         Back
       </button>
+    </div>
+  );
+}
+
+function SuccessOverlay({ type, employeeName, now }) {
+  const isCheckIn = type === "in";
+  const timeStr = new Intl.DateTimeFormat("en-CA", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: TZ,
+  }).format(now || new Date());
+
+  return (
+    <div className={`kiosk-success-overlay ${isCheckIn ? "is-checkin" : "is-checkout"}`}>
+      <div className="kiosk-success-check">✓</div>
+      <div className="kiosk-success-title">
+        {isCheckIn ? "Check-in complete" : "Check-out complete"}
+      </div>
+      <div className="kiosk-success-name">{employeeName}</div>
+      <div className="kiosk-success-time">{timeStr}</div>
     </div>
   );
 }
@@ -249,6 +328,7 @@ function KioskView() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [pin, setPin] = useState("");
   const [status, setStatus] = useState({ tone: "", message: "" });
+  const [successType, setSuccessType] = useState(null);
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(true);
   const [employeesError, setEmployeesError] = useState("");
   const [now, setNow] = useState(() => new Date());
@@ -356,6 +436,7 @@ function KioskView() {
     setSelectedEmployee(null);
     setPin("");
     setStatus({ tone: "", message: "" });
+    setSuccessType(null);
   };
 
   const goToPinStep = (employee) => {
@@ -430,11 +511,10 @@ function KioskView() {
         return;
       }
 
-      setStatus({
-        tone: "success",
-        message: type === "in" ? "Check-in successful" : "Check-out successful",
-      });
+      setSuccessType(type);
+      setStatus({ tone: "", message: "" });
       setScreen("success");
+      playSound(type === "in" ? "success-in" : "success-out");
 
       window.setTimeout(() => {
         resetFlow();
@@ -499,6 +579,16 @@ function KioskView() {
             setScreen("pin");
             setStatus({ tone: "", message: "" });
           }}
+        />
+      );
+    }
+
+    if (screen === "success") {
+      return (
+        <SuccessOverlay
+          type={successType}
+          employeeName={selectedEmployee?.name}
+          now={now}
         />
       );
     }

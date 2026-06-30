@@ -607,21 +607,23 @@
   border-color: rgba(255, 255, 255, 0.25);
 }
 
-/* ── Phase 5 UI: Foreground elevation & clarity ─────────────────────────────
+/* ── Phase 5 UI: Premium glass foreground & confirmation ────────────────────
    BACKGROUND / WEATHER CLASSES ARE NOT TOUCHED.
-   Only foreground card, step rail, employee grid, pin pad, action panel.
+   Only foreground card, step rail, employee grid, pin pad, action panel,
+   success overlay.
    ───────────────────────────────────────────────────────────────────────── */
 
 /* Main content card — stronger glass separation from background */
 .kiosk-main-card {
   border-color: rgba(255, 255, 255, 0.11);
   backdrop-filter: blur(34px);
+  -webkit-backdrop-filter: blur(34px);
   box-shadow:
     0 40px 90px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* Step rail — inactive pills more legible, active pill with gold left accent */
+/* Step rail — inactive pills more legible, active pill with gold accent */
 .kiosk-step-pill {
   color: rgba(255, 255, 255, 0.72);
   font-size: 0.98rem;
@@ -635,7 +637,7 @@
   border-color: rgba(255, 209, 197, 0.32);
 }
 
-/* Selected employee — contained box so it doesn't float */
+/* Selected employee — contained glass box */
 .kiosk-selected-employee {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 1.25rem;
@@ -647,34 +649,47 @@
   color: rgba(255, 255, 255, 0.58);
 }
 
-/* Employee cards — avatar initial circle via ::before */
+/* Employee cards — fixed equal height, centered, no avatar */
 .kiosk-employee-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  border-color: rgba(255, 180, 180, 0.18);
-  backdrop-filter: blur(28px);
-}
-
-.kiosk-employee-card::before {
-  content: attr(data-initial);
+  height: 8rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.6rem;
-  height: 2.6rem;
-  border-radius: 999px;
-  background: rgba(200, 168, 112, 0.18);
-  border: 1px solid rgba(200, 168, 112, 0.28);
-  color: rgba(200, 168, 112, 0.95);
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  flex-shrink: 0;
+  text-align: center;
+  padding: 1rem 1.2rem;
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02) 60%),
+    rgba(15, 10, 12, 0.55);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 24px 48px rgba(0, 0, 0, 0.34);
 }
 
+.kiosk-employee-card:hover,
+.kiosk-employee-card:focus-visible {
+  border-color: rgba(255, 255, 255, 0.22);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05) 60%),
+    rgba(15, 10, 12, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 30px 60px rgba(0, 0, 0, 0.4);
+}
+
+/* Employee name — 2-line clamp, no overflow */
 .kiosk-employee-name {
-  font-size: 1.6rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  font-size: 1.55rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
 }
 
 /* PIN confirmation line */
@@ -692,25 +707,81 @@
   font-weight: 700;
 }
 
-/* Action panel — Check-out gets clear distinction from Check-in */
-.kiosk-action-button {
+/* Keypad buttons — premium glass */
+.kiosk-keypad-button {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03) 60%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 20px 40px rgba(0, 0, 0, 0.28);
+}
+
+.kiosk-keypad-button:hover,
+.kiosk-keypad-button:focus-visible {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06) 60%);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 24px 48px rgba(0, 0, 0, 0.32);
+}
+
+/* Check-in button — green glass */
+.kiosk-action-button.is-checkin {
+  background:
+    linear-gradient(160deg, rgba(22, 105, 58, 0.88), rgba(14, 76, 40, 0.78)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 55%);
+  border: 1px solid rgba(100, 220, 150, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 24px 50px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  color: #d4fde8;
   font-size: 1.9rem;
   font-weight: 700;
 }
 
-.kiosk-action-button:not(.is-primary) {
-  border: 1.5px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff8f6;
+.kiosk-action-button.is-checkin:hover,
+.kiosk-action-button.is-checkin:focus-visible {
+  background:
+    linear-gradient(160deg, rgba(22, 120, 65, 0.94), rgba(14, 86, 46, 0.84));
+  border-color: rgba(100, 220, 150, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 28px 60px rgba(0, 0, 0, 0.36);
 }
 
-.kiosk-action-button:not(.is-primary):hover,
-.kiosk-action-button:not(.is-primary):focus-visible {
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.11);
+/* Check-out button — red glass */
+.kiosk-action-button.is-checkout {
+  background:
+    linear-gradient(160deg, rgba(140, 20, 20, 0.88), rgba(100, 14, 14, 0.78)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 55%);
+  border: 1px solid rgba(255, 140, 140, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 24px 50px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  color: #ffe4e4;
+  font-size: 1.9rem;
+  font-weight: 700;
 }
 
-/* Back link — give it a subtle border so it reads as a control */
+.kiosk-action-button.is-checkout:hover,
+.kiosk-action-button.is-checkout:focus-visible {
+  background:
+    linear-gradient(160deg, rgba(160, 24, 24, 0.94), rgba(115, 16, 16, 0.84));
+  border-color: rgba(255, 140, 140, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 28px 60px rgba(0, 0, 0, 0.36);
+}
+
+/* Back / action link */
 .kiosk-action-link {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 1.75rem;
@@ -725,7 +796,65 @@
   color: #fff;
 }
 
-/* Success notice — larger, more prominent */
+/* Success overlay — full-card glass confirmation */
+.kiosk-success-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 22rem;
+  border-radius: 2rem;
+  padding: 3rem 2rem;
+  text-align: center;
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 32px 80px rgba(0, 0, 0, 0.45);
+}
+
+.kiosk-success-overlay.is-checkin {
+  background: linear-gradient(160deg, rgba(16, 85, 46, 0.88), rgba(10, 60, 32, 0.78));
+  border-color: rgba(80, 220, 140, 0.28);
+}
+
+.kiosk-success-overlay.is-checkout {
+  background: linear-gradient(160deg, rgba(130, 18, 18, 0.88), rgba(90, 12, 12, 0.78));
+  border-color: rgba(255, 130, 130, 0.28);
+}
+
+.kiosk-success-check {
+  font-size: 5rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.kiosk-success-title {
+  font-size: clamp(2rem, 3.5vw, 2.8rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #fff;
+  line-height: 1.1;
+}
+
+.kiosk-success-name {
+  font-size: clamp(1.3rem, 2.5vw, 1.8rem);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.kiosk-success-time {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.58);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 0.25rem;
+}
+
+/* Status notices */
 .kiosk-status-notice.is-success {
   border-color: rgba(142, 255, 212, 0.32);
   background: rgba(18, 100, 68, 0.38);
@@ -734,7 +863,6 @@
   padding: 1.25rem 1.5rem;
 }
 
-/* Error notice — slightly more readable */
 .kiosk-status-notice.is-error {
   border-color: rgba(255, 143, 143, 0.36);
   background: rgba(120, 20, 20, 0.4);
