@@ -3,7 +3,8 @@ const puppeteer  = require("puppeteer");
 const fs         = require("fs");
 const path       = require("path");
 
-const FROM_ADDRESS = "Sushi House Banff <payroll@mail.sushihousebanff.ca>";
+const FROM_ADDRESS   = "Sushi House Banff <payroll@mail.sushihousebanff.ca>";
+const REPLY_TO_ADDRESS = process.env.REPLY_TO_EMAIL || "sushihousebanff@gmail.com";
 
 let resend;
 
@@ -20,6 +21,7 @@ async function testConnection(adminEmail) {
   const client = getClient();
   const { data, error } = await client.emails.send({
     from: FROM_ADDRESS,
+    reply_to: REPLY_TO_ADDRESS,
     to: adminEmail,
     subject: "Sushi House Banff — Email connection test",
     text: "Hello,\n\nThis is a test email from Sushi House Banff admin panel.\n\nIf you received this, your email integration is working correctly.",
@@ -232,6 +234,7 @@ async function sendPayrollEmail(employee, payslip, adminEmail) {
 
   const payload = {
     from: FROM_ADDRESS,
+    reply_to: REPLY_TO_ADDRESS,
     to: employee.email,
     subject: `Pay Statement — ${employee.name} (${periodLabel})`,
     text: emailText,
@@ -255,6 +258,7 @@ async function sendStaffMessage({ recipients, subject, body, bccEmail, attachmen
     const text = `${body}\n\n—\nSushi House Banff`;
     const payload = {
       from: FROM_ADDRESS,
+      reply_to: REPLY_TO_ADDRESS,
       to: recipient.email,
       subject,
       text,
