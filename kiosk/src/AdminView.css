@@ -1249,37 +1249,42 @@ body.admin-bg {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
+  background: rgba(26,26,26,0.035);
+  border-radius: 12px;
+  padding: 0.75rem;
+  margin-bottom: 1.25rem;
 }
 
 .admin-metric-card {
-  background: rgba(255,255,255,0.80);
+  background: #fff;
   border-radius: 10px;
   padding: 0.9rem 1rem;
-  border: 0.5px solid rgba(26,26,26,0.10);
-  border-left: 4px solid rgba(26,26,26,0.12);
+  border: 1px solid rgba(26,26,26,0.12);
+  border-left: 4px solid rgba(26,26,26,0.15);
+  box-shadow: 0 1px 4px rgba(26,26,26,0.06);
 }
 
 /* Palette C metric card variants */
 .admin-metric-card--earnings {
-  background: #EAF3DE;
-  border-color: #97C459;
-  border-left-color: #639922;
+  background: #D4EDBA;
+  border: 2px solid #639922;
+  border-left: 5px solid #3B6D11;
 }
 .admin-metric-card--earnings .admin-subtle-text { color: #3B6D11; }
 .admin-metric-card--earnings .font-semibold      { color: #173404; }
 
 .admin-metric-card--vacation {
-  background: #E6F1FB;
-  border-color: #85B7EB;
-  border-left-color: #378ADD;
+  background: #C0DCFA;
+  border: 2px solid #378ADD;
+  border-left: 5px solid #185FA5;
 }
 .admin-metric-card--vacation .admin-subtle-text { color: #185FA5; }
 .admin-metric-card--vacation .font-semibold      { color: #042C53; }
 
 .admin-metric-card--deduction {
-  background: #FAEEDA;
-  border-color: #EF9F27;
-  border-left-color: #BA7517;
+  background: #F5D98A;
+  border: 2px solid #BA7517;
+  border-left: 5px solid #854F0B;
 }
 .admin-metric-card--deduction .admin-subtle-text { color: #854F0B; }
 .admin-metric-card--deduction .font-semibold      { color: #412402; }
@@ -1868,10 +1873,17 @@ pre {
 }
 
 /* ── Admin payroll period cards ───────────────────────────────── */
-.admin-payroll-period-list,
+.admin-payroll-period-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .admin-payroll-card-list {
   display: grid;
   gap: 0.75rem;
+  background: rgba(26,26,26,0.035);
+  border-radius: 12px;
+  padding: 1rem;
 }
 
 .admin-payroll-period-card {
@@ -1950,17 +1962,18 @@ pre {
 
 /* Payroll item card */
 .admin-payroll-item-card {
-  background: rgba(255,255,255,0.85);
+  background: #fff;
   border-radius: 10px;
   padding: 1rem 1.1rem;
-  border: 0.5px solid rgba(26,26,26,0.10);
-  border-left: 4px solid rgba(138,128,120,0.30);
-  transition: border-left-color 0.15s;
+  border: 1px solid rgba(26,26,26,0.12);
+  border-left: 4px solid rgba(138,128,120,0.40);
+  box-shadow: 0 2px 12px rgba(26,26,26,0.08);
+  transition: border-left-color 0.15s, background 0.15s;
 }
 
 .admin-payroll-item-card.is-expanded {
-  border-left-color: #639922;
-  background: #f5fbee;
+  border-left: 5px solid #3B6D11;
+  background: #D4EDBA;
 }
 
 .admin-payroll-item-card__name { font-size: 0.95rem; font-weight: 700; color: var(--c-text-primary); margin: 0; }
@@ -1989,24 +2002,25 @@ pre {
 }
 
 .admin-payroll-detail-card {
-  background: rgba(255,255,255,0.80);
+  background: #fff;
   border-radius: 10px;
   padding: 0.85rem 0.9rem;
-  border: 0.5px solid rgba(26,26,26,0.09);
-  border-left: 4px solid rgba(138,128,120,0.25);
+  border: 1px solid rgba(26,26,26,0.12);
+  border-left: 4px solid rgba(138,128,120,0.35);
+  box-shadow: 0 1px 6px rgba(26,26,26,0.06);
 }
 
 .admin-payroll-detail-card--earnings {
-  background: #EAF3DE;
-  border-color: #97C459;
-  border-left-color: #639922;
+  background: #D4EDBA;
+  border: 2px solid #639922;
+  border-left: 5px solid #3B6D11;
 }
 .admin-payroll-detail-card--earnings .admin-payroll-detail-card__title { color: #3B6D11; }
 
 .admin-payroll-detail-card--deduction {
-  background: #FAEEDA;
-  border-color: #EF9F27;
-  border-left-color: #BA7517;
+  background: #F5D98A;
+  border: 2px solid #BA7517;
+  border-left: 5px solid #854F0B;
 }
 .admin-payroll-detail-card--deduction .admin-payroll-detail-card__title { color: #854F0B; }
 
@@ -3187,8 +3201,8 @@ textarea {
 .alberta-review-panel,
 .alberta-review-empty,
 .alberta-payslip-review {
-  background: var(--ds-surface);
-  border: 1px solid rgba(215,25,32,0.16);
+  background: #EEEDFE;
+  border: 1.5px solid #7F77DD;
   border-radius: var(--ds-radius-lg);
   box-shadow: var(--ds-shadow-sm);
 }
