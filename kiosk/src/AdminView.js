@@ -2590,23 +2590,42 @@ function AdminView() {
     const displayDate = record.recorded_at
       ? new Date(record.recorded_at).toLocaleDateString("en-CA", { timeZone: TZ, weekday: "long", year: "numeric", month: "long", day: "numeric" })
       : "";
-    const deleteTitle = record.entry_mode === "manual"
-      ? `Delete manual entry for ${record.employee_name}?`
-      : `Delete record for ${record.employee_name}?`;
-    const deleteDetail = record.entry_mode === "manual"
-      ? `Work date: ${displayDate}`
-      : `Time: ${formatDateTime(record.recorded_at)}`;
-    const confirmed = await askConfirm({ title: deleteTitle, message: deleteDetail, confirmLabel: "Delete", variant: "danger" });
+    const displayTime = record.recorded_at
+      ? new Date(record.recorded_at).toLocaleTimeString("en-CA", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      : "";
+    const deleteTitle = `Delete record ID ${recordId}?`;
+    const deleteDetail = (
+      <div style={{ fontSize: "0.82rem", lineHeight: 1.7, fontFamily: "monospace" }}>
+        <div><b>ID:</b> {recordId}</div>
+        <div><b>Employee:</b> {record.employee_name}</div>
+        <div><b>Type:</b> {record.type}</div>
+        <div><b>recorded_at (raw):</b> {record.recorded_at || "—"}</div>
+        <div><b>Display date (MDT):</b> {displayDate}</div>
+        <div><b>Display time (MDT):</b> {displayTime}</div>
+        <div><b>Mode:</b> {record.entry_mode || "clock"}</div>
+      </div>
+    );
+    const confirmed = await askConfirm({ title: deleteTitle, detail: deleteDetail, confirmLabel: "Delete", variant: "danger" });
     if (!confirmed) return;
 
     setFeedback("");
     setError("");
 
+    console.log("DELETE CLOCK RECORD", {
+      id: recordId,
+      employee: record.employee_name,
+      type: record.type,
+      recorded_at: record.recorded_at,
+      displayDate,
+      displayTime,
+    });
+
     try {
       const response = await adminFetch(`${API_BASE_URL}/admin/time-records/${recordId}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to delete record.");
-      setFeedback("Record marked as deleted successfully.");
+      setFeedback(`Record ID ${recordId} marked as deleted successfully.`);
+      setPage(1);
       await loadAdminData();
     } catch (deleteError) {
       setError(deleteError.message || "Failed to delete record.");
@@ -4520,8 +4539,6 @@ function AdminView() {
                 <input type="date" value={filters.end} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, end: event.target.value })); }} className="admin-input" />
                 <select value={filters.recordStatus} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, recordStatus: event.target.value })); }} className="admin-select">
                   <option value="active">Active</option>
-                  <option value="deleted">Deleted</option>
-                  <option value="all">All</option>
                 </select>
               </div>
 
@@ -4603,7 +4620,10 @@ function AdminView() {
                               <td className="cr-td__avatar">
                                 <span className="cr-row__avatar">{initial}</span>
                               </td>
-                              <td className="cr-td__name">{record.employee_name}</td>
+                              <td className="cr-td__name">
+                                {record.employee_name}
+                                <span style={{ display: "block", fontSize: "0.68rem", opacity: 0.45, fontFamily: "monospace" }}>ID:{record.id}</span>
+                              </td>
                               <td>
                                 <span className={`cr-type-badge ${badgeClass}`}>
                                   {record.type === "check-in" ? "Check in" : record.type === "check-out" ? "Check out" : record.entry_mode === "manual" ? "Manual" : record.type}
