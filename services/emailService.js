@@ -63,91 +63,131 @@ function getDeductionRows(payslip) {
   ];
 }
 
-// ─── Exact same HTML as buildPayslipPrintHtml in AdminView.js ─────────────────
+// ─── PDF payslip HTML — letterhead format matching printed payslip ────────────
 function buildPayslipHtml(payslip) {
-  // Embed logo as base64 so puppeteer doesn't need server access
   const logoPath = path.join(__dirname, "../kiosk/public/logo.png");
   let logoSrc = "";
   try {
     const logoData = fs.readFileSync(logoPath);
     logoSrc = `data:image/png;base64,${logoData.toString("base64")}`;
-  } catch (_) {
-    // logo not found — skip image
-  }
+  } catch (_) {}
 
-  const benefitsNote = payslip.benefits_note || "";
   const earningsRows = getEarningsRows(payslip)
-    .map((row, index) => {
-      const benefitCell = index === 0 && benefitsNote ? benefitsNote : "";
-      return `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td class="amount">${formatMoney(row.value)}</td><td class="benefits">${benefitCell}</td></tr>`;
+    .map((row) => {
+      if (row.isTotal) {
+        return `<tr class="total-row">
+          <td>${row.label}</td>
+          <td class="col-earn"></td>
+          <td class="col-total">${formatMoney(row.value)}</td>
+        </tr>`;
+      }
+      return `<tr>
+        <td>${row.label}</td>
+        <td class="col-earn">${formatMoney(row.value)}</td>
+        <td class="col-total"></td>
+      </tr>`;
     })
     .join("");
 
   const deductionRows = getDeductionRows(payslip)
-    .map((row) => `<tr class="${row.isTotal ? "is-total" : ""}"><td>${row.label}</td><td class="amount">${formatMoney(row.value)}</td><td class="benefits"></td></tr>`)
+    .map((row) => {
+      if (row.isTotal) {
+        return `<tr class="total-row">
+          <td>${row.label}</td>
+          <td class="col-earn"></td>
+          <td class="col-total">(${formatMoney(row.value)})</td>
+        </tr>`;
+      }
+      return `<tr>
+        <td>${row.label}</td>
+        <td class="col-earn">(${formatMoney(row.value)})</td>
+        <td class="col-total"></td>
+      </tr>`;
+    })
     .join("");
+
+  const chequeRow = payslip.header.payment_reference
+    ? `<tr><td>Cheque No.</td><td>:</td><td>No. ${payslip.header.payment_reference}</td></tr>`
+    : "";
+
+  const vacationNote = payslip.notes?.accrued_vacation_balance_note || "";
 
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Payslip - ${payslip.employee_name}</title>
+    <title>Payslip - ${payslip.header.employee}</title>
     <style>
-      body { font-family: Arial, Helvetica, sans-serif; background: #f3f4f6; color: #111111; padding: 24px; }
-      .sheet { max-width: 900px; margin: 0 auto; background: white; border: 1px solid #4b5563; }
-      .header { padding: 18px 22px 10px; display: flex; align-items: center; gap: 14px; }
-      .header-logo { height: 52px; width: auto; }
-      .header-text .title { font-size: 20px; font-weight: 700; margin: 0; }
-      .header-text .address { color: #4b5563; font-size: 12px; margin: 2px 0 0; }
-      .header-text .doc-label { font-size: 13px; font-weight: 600; margin: 2px 0 0; }
-      .meta-table, .statement-table { width: calc(100% - 44px); margin: 0 22px 18px; border-collapse: collapse; }
-      .meta-table td { border: 1px solid #6b7280; padding: 10px 12px; font-size: 13px; vertical-align: top; }
-      .meta-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #4b5563; margin-bottom: 4px; }
-      .meta-value { font-size: 14px; font-weight: 600; color: #111111; }
-      .statement-table th, .statement-table td { border: 1px solid #6b7280; padding: 10px 12px; font-size: 14px; }
-      .statement-table th { background: #e5e7eb; text-transform: uppercase; font-size: 12px; letter-spacing: .04em; text-align: left; }
-      .statement-table .amount, .statement-table th.amount { text-align: right; width: 160px; }
-      .statement-table .benefits, .statement-table th.benefits { width: 260px; white-space: pre-line; text-align: left; }
-      .section-row td { background: #f3f4f6; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-      .is-total td { font-weight: 700; background: #fafafa; }
-      .net-row td { font-weight: 700; font-size: 18px; background: #e5e7eb; }
-      .note { margin: 0 22px 22px; padding: 10px 12px; border: 1px solid #9ca3af; font-size: 12px; color: #374151; background: #f9fafb; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #111; background: #fff; padding: 40px 48px; }
+      .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
+      .letterhead { line-height: 1.75; }
+      .letterhead .pay-date { margin-bottom: 14px; }
+      .letterhead .company-name { font-weight: bold; }
+      .logo { height: 88px; width: auto; }
+      .section-label { font-size: 13px; margin-bottom: 12px; }
+      .meta-table { border-collapse: collapse; margin-bottom: 22px; }
+      .meta-table td { padding: 3px 0; vertical-align: top; }
+      .meta-table .lbl { width: 110px; }
+      .meta-table .sep { width: 24px; color: #555; }
+      .main-table { border-collapse: collapse; width: 100%; }
+      .main-table th, .main-table td { border: 1px solid #aaa; padding: 7px 10px; }
+      .main-table thead th { background: #d4d4d4; font-weight: bold; text-align: left; }
+      .main-table .col-earn { width: 210px; text-align: right; }
+      .main-table .col-total { width: 130px; text-align: right; }
+      .section-row td { background: #d4d4d4; font-weight: bold; }
+      .total-row td { font-weight: bold; }
+      .net-row td { font-weight: bold; }
+      .vacation-note { margin-top: 16px; font-size: 11px; color: #444; border: 1px solid #bbb; padding: 8px 10px; background: #fafafa; }
     </style>
   </head>
   <body>
-    <div class="sheet">
-      <div class="header">
-        ${logoSrc ? `<img class="header-logo" src="${logoSrc}" alt="Sushi House Banff logo" />` : ""}
-        <div class="header-text">
-          <p class="title">Sushi House Banff</p>
-          <p class="address">304 Caribou Street, P.O. Box 1985, Banff, Alberta, Canada T1L 1B7</p>
-          <p class="doc-label">Employee Earnings Statement</p>
-        </div>
+    <div class="page-header">
+      <div class="letterhead">
+        <div class="pay-date">${payslip.header.pay_date}</div>
+        <div class="company-name">709027 AB Ltd</div>
+        <div>Sushi House Banff</div>
+        <div>304 Caribou Street</div>
+        <div>P.O.Box 1985</div>
+        <div>Banff, AB</div>
+        <div>T1L 1B7</div>
+        <div>Canada</div>
+        <div>Phone : 403-762-4353</div>
       </div>
-      <table class="meta-table">
-        <tr>
-          <td><span class="meta-label">Employee</span><span class="meta-value">${payslip.header.employee}</span></td>
-          <td><span class="meta-label">Pay Period</span><span class="meta-value">${payslip.header.pay_period}</span></td>
-          <td><span class="meta-label">Total Hours</span><span class="meta-value">${Number(payslip.header.total_hours || 0).toFixed(2)} hrs</span></td>
-          <td><span class="meta-label">Wage Rate</span><span class="meta-value">${payslip.header.wage_rate}</span></td>
-          <td><span class="meta-label">Pay Date</span><span class="meta-value">${payslip.header.pay_date}</span></td>
-          <td><span class="meta-label">Cheque No.</span><span class="meta-value">${payslip.header.payment_reference ? `No. ${payslip.header.payment_reference}` : "-"}</span></td>
-        </tr>
-      </table>
-      <table class="statement-table">
-        <thead>
-          <tr><th>Description</th><th class="amount">Amount</th><th class="benefits">Benefits</th></tr>
-        </thead>
-        <tbody>
-          <tr class="section-row"><td colspan="3">Income / Earnings</td></tr>
-          ${earningsRows}
-          <tr class="section-row"><td colspan="3">Deductions</td></tr>
-          ${deductionRows}
-          <tr class="net-row"><td>Net Pay</td><td class="amount">${formatMoney(payslip.totals.net_pay)}</td><td class="benefits"></td></tr>
-        </tbody>
-      </table>
-      ${payslip.notes.accrued_vacation_balance_note ? `<div class="note">${payslip.notes.accrued_vacation_balance_note}</div>` : ""}
+      ${logoSrc ? `<img class="logo" src="${logoSrc}" alt="Sushi House Banff" />` : ""}
     </div>
+
+    <div class="section-label">Earnings Statement</div>
+
+    <table class="meta-table">
+      <tr><td class="lbl">Employee</td><td class="sep">:</td><td>${payslip.header.employee}</td></tr>
+      <tr><td class="lbl">Pay Period</td><td class="sep">:</td><td>${payslip.header.pay_period}</td></tr>
+      <tr><td class="lbl">Wage Rate</td><td class="sep">:</td><td>${payslip.header.wage_rate}</td></tr>
+      <tr><td class="lbl">Pay Date</td><td class="sep">:</td><td>${payslip.header.pay_date}</td></tr>
+      ${chequeRow}
+    </table>
+
+    <table class="main-table">
+      <thead>
+        <tr>
+          <th>Income</th>
+          <th class="col-earn">Earnings</th>
+          <th class="col-total">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${earningsRows}
+        <tr class="section-row"><td colspan="3">Deductions</td></tr>
+        ${deductionRows}
+        <tr class="net-row">
+          <td>Net Pay</td>
+          <td class="col-earn"></td>
+          <td class="col-total">${formatMoney(payslip.totals.net_pay)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${vacationNote ? `<div class="vacation-note">${vacationNote}</div>` : ""}
   </body>
 </html>`;
 }
@@ -180,8 +220,10 @@ async function sendPayrollEmail(employee, payslip, adminEmail) {
   const periodEnd   = payslip.pay_period?.end_date   || "";
   const periodLabel = `${formatDateLong(periodStart)} to ${formatDateLong(periodEnd)}`;
 
+  console.log(`[email] Generating payslip PDF for ${employee.name}`);
   const html      = buildPayslipHtml(payslip);
   const pdfBuffer = await htmlToPdf(html);
+  console.log(`[email] PDF generated (${pdfBuffer.length} bytes), sending via Resend`);
 
   const safeName = employee.name.replace(/\s+/g, "_");
   const filename = `payslip_${safeName}_${periodStart}_${periodEnd}.pdf`;
@@ -200,6 +242,7 @@ async function sendPayrollEmail(employee, payslip, adminEmail) {
   const { data, error } = await client.emails.send(payload);
 
   if (error) throw new Error(error.message || "Failed to send payroll email.");
+  console.log(`[email] Resend accepted email, id: ${data.id}`);
   return { id: data.id };
 }
 

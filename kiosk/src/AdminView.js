@@ -1399,21 +1399,34 @@ function PayrollReviewView({ adminFetch, payrolls, adminUser }) {
 
   const executeSend = async (toSend) => {
     setConfirmModal(null);
+    let succeeded = 0;
+    let lastError = "";
     for (const item of toSend) {
       setSending(s => ({ ...s, [item.id]: true }));
       try {
         const r = await adminFetch(`/api/admin/payrolls/${selectedPayrollId}/items/${item.id}/send`, { method: "POST" });
         if (r.ok) {
+          succeeded++;
           setItems(prev => prev.map(i => i.id === item.id ? { ...i, send_status: "sent" } : i));
         } else {
           const d = await r.json();
-          setError(d.error || "Send failed.");
+          lastError = d.error || "Send failed.";
         }
-      } catch (e) { setError(e.message); }
+      } catch (e) {
+        lastError = e.message;
+      }
       setSending(s => ({ ...s, [item.id]: false }));
     }
-    setFeedback("Emails sent.");
-    setTimeout(() => setFeedback(""), 3000);
+    if (succeeded === toSend.length) {
+      setFeedback(`Email${succeeded !== 1 ? "s" : ""} sent successfully.`);
+      setTimeout(() => setFeedback(""), 4000);
+    } else if (succeeded > 0) {
+      setFeedback(`${succeeded} of ${toSend.length} emails sent.`);
+      setError(lastError || "Some emails failed to send.");
+      setTimeout(() => setFeedback(""), 4000);
+    } else {
+      setError(lastError || "Failed to send emails.");
+    }
   };
 
   const handleSaveCheque = async (itemId, chequeVal) => {

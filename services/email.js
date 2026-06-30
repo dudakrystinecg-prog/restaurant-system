@@ -14,8 +14,8 @@ async function sendPayrollEmail(employee, payslip, adminEmail) {
 }
 
 async function sendTestEmail(toEmail) {
-  if (emailService && typeof emailService.sendTestEmail === "function") {
-    return emailService.sendTestEmail(toEmail);
+  if (emailService && typeof emailService.testConnection === "function") {
+    return emailService.testConnection(toEmail);
   }
   console.log(`[email stub] Would send test email to ${toEmail}`);
 }

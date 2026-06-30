@@ -1843,12 +1843,15 @@ app.post("/api/admin/payrolls/:payrollId/items/:itemId/send", requireAdminAuth, 
 
     const payslip = getPayrollPayslip(Number(req.params.payrollId), Number(req.params.itemId));
     const adminEmail = req.adminSession.email || "";
+    console.log(`[email] Payroll email route entered for item ${req.params.itemId} → ${item.employee_email}`);
     try {
       const { sendPayrollEmail } = require("./services/email");
       await sendPayrollEmail({ name: item.employee_name, email: item.employee_email }, payslip, adminEmail);
-    } catch (_emailErr) {
-      // Email sending failed but we still mark it
+    } catch (emailErr) {
+      console.error(`[email] Failed to send payroll email for item ${req.params.itemId}:`, emailErr.message);
+      return res.status(500).json({ error: `Failed to send payroll email: ${emailErr.message}` });
     }
+    console.log(`[email] Payroll email sent successfully for item ${req.params.itemId}`);
     markPayrollItemSent(Number(req.params.itemId));
     res.json({ ok: true });
   } catch (err) {
