@@ -1876,8 +1876,8 @@ app.post("/api/admin/messages/send", requireAdminAuth, upload.array("attachments
     if (!subject?.trim()) return res.status(400).json({ error: "Subject is required." });
     if (!body?.trim()) return res.status(400).json({ error: "Message body is required." });
 
-    const allEmployees = listEmployees();
-    const recipients = allEmployees.filter(e => recipientIds.includes(e.id) && e.email);
+    const allEmployees = listAdminEmployees();
+    const recipients = allEmployees.filter(e => recipientIds.includes(e.id) && e.email && e.is_active_employee !== 0);
     if (!recipients.length) return res.status(400).json({ error: "None of the selected employees have email addresses." });
 
     const bccEmail = bccSelf === "true" ? (req.adminSession.email || "") : undefined;
