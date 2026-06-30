@@ -2096,9 +2096,20 @@ pre {
 
 .admin-payroll-holiday-editor {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) 110px auto;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.admin-payroll-holiday-editor input {
+  min-width: 0;
+  width: 100%;
+}
+
+.admin-payroll-holiday-editor button {
+  white-space: nowrap;
 }
 
 /* ── Status / generic badges ──────────────────────────────────── */
