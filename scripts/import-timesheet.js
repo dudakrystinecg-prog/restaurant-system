@@ -318,12 +318,27 @@ console.log(`\nParsed ${parsed.length} shifts total, ${invalidRows.length} inval
 // ─── Open DB (read-only for dry-run) ─────────────────────────────────────────
 const db = new Database(DB_PATH, { readonly: DRY_RUN });
 
-// Load employees from DB
-const dbEmployees = db.prepare("SELECT id, name FROM employees WHERE deleted_at IS NULL OR deleted_at = ''").all()
-  .concat(db.prepare("SELECT id, name FROM employees WHERE 1=1").all()) // catch all
-  .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i); // dedupe
+// ─── Schema introspection ─────────────────────────────────────────────────────
+// The import script opens the DB directly (bypassing initializeDatabase), so
+// columns added via ensureColumnExists may or may not exist. Check at runtime.
+function hasColumn(tableName, columnName) {
+  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return cols.some(c => c.name === columnName);
+}
 
-// Actually just load all employees without filter since former employees might be in DB
+const TR = {
+  deleted_at:       hasColumn("time_records", "deleted_at"),
+  created_manually: hasColumn("time_records", "created_manually"),
+  manual_category:  hasColumn("time_records", "manual_category"),
+  worked_hours:     hasColumn("time_records", "worked_hours"),
+  note:             hasColumn("time_records", "note"),
+  updated_at:       hasColumn("time_records", "updated_at"),
+  entry_mode:       hasColumn("time_records", "entry_mode"),
+};
+
+console.log("\nDetected time_records columns:", Object.entries(TR).map(([k,v]) => `${k}:${v ? "✓" : "✗"}`).join("  "));
+
+// Load all employees — employees table has no deleted_at column
 const allDbEmployees = db.prepare("SELECT id, name FROM employees").all();
 
 // ─── Name matching ────────────────────────────────────────────────────────────
@@ -375,19 +390,50 @@ for (const shift of parsed) {
 }
 
 // ─── Duplicate check ──────────────────────────────────────────────────────────
-const existsStmt = db.prepare(`
-  SELECT id FROM time_records
-  WHERE employee_id = ? AND recorded_at = ? AND (deleted_at IS NULL OR deleted_at = '')
-  LIMIT 1
-`);
+const dupWhere = TR.deleted_at
+  ? "employee_id = ? AND recorded_at = ? AND (deleted_at IS NULL OR deleted_at = '')"
+  : "employee_id = ? AND recorded_at = ?";
+const existsStmt = db.prepare(
+  `SELECT id FROM time_records WHERE ${dupWhere} LIMIT 1`
+);
 
 // ─── Insert statement (only used in --import mode) ───────────────────────────
-const insertStmt = DO_IMPORT ? db.prepare(`
-  INSERT INTO time_records (
-    employee_id, type, entry_mode, manual_category,
-    recorded_at, worked_hours, note, created_manually, updated_at, deleted_at
-  ) VALUES (?, ?, 'clock', 'regular', ?, 0, ?, 1, ?, NULL)
-`) : null;
+// Build INSERT dynamically based on which optional columns exist in this DB.
+// Columns always present: employee_id, type, recorded_at
+// Optional columns detected above via hasColumn().
+function buildInsertStmt() {
+  const cols   = ["employee_id", "type"];
+  const vals   = ["?", "?"];
+  const params = []; // placeholders filled at call time; tracked by order
+
+  if (TR.entry_mode)       { cols.push("entry_mode");       vals.push("'clock'"); }
+  if (TR.manual_category)  { cols.push("manual_category");  vals.push("'regular'"); }
+
+  cols.push("recorded_at"); vals.push("?"); // always
+
+  if (TR.worked_hours)     { cols.push("worked_hours");     vals.push("0"); }
+  if (TR.note)             { cols.push("note");             vals.push("?"); }
+  if (TR.created_manually) { cols.push("created_manually"); vals.push("1"); }
+  if (TR.updated_at)       { cols.push("updated_at");       vals.push("?"); }
+  if (TR.deleted_at)       { cols.push("deleted_at");       vals.push("NULL"); }
+
+  return db.prepare(`INSERT INTO time_records (${cols.join(", ")}) VALUES (${vals.join(", ")})`);
+}
+const insertStmt = DO_IMPORT ? buildInsertStmt() : null;
+
+// Wrapper: call insertStmt.run() with the right positional args based on which cols exist
+function insertRecord(employeeId, type, recordedAt, note, updatedAt) {
+  const args = [employeeId, type]; // always: employee_id, type
+  if (TR.entry_mode)       {} // literal 'clock' — no param
+  if (TR.manual_category)  {} // literal 'regular' — no param
+  args.push(recordedAt);       // always: recorded_at
+  if (TR.worked_hours)     {} // literal 0 — no param
+  if (TR.note)             { args.push(note); }
+  if (TR.created_manually) {} // literal 1 — no param
+  if (TR.updated_at)       { args.push(updatedAt); }
+  if (TR.deleted_at)       {} // literal NULL — no param
+  insertStmt.run(...args);
+}
 
 // ─── Process shifts ───────────────────────────────────────────────────────────
 let willInsert  = 0;
@@ -434,8 +480,8 @@ for (const shift of parsed) {
   }
 
   if (DO_IMPORT) {
-    insertStmt.run(dbEmp.id, "check-in",  checkInTs,  note, now);
-    insertStmt.run(dbEmp.id, "check-out", checkOutTs, note, now);
+    insertRecord(dbEmp.id, "check-in",  checkInTs,  note, now);
+    insertRecord(dbEmp.id, "check-out", checkOutTs, note, now);
   }
 }
 
