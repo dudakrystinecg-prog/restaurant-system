@@ -4739,3 +4739,68 @@ textarea {
     padding: 1rem;
   }
 }
+
+/* ── Phase 6 UI: Admin Clock page redesign ───────────────────── */
+
+/* Pagination strip — separated from panel header */
+.cr-pagination-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0 0.8rem;
+  border-top: 1px solid var(--ds-border);
+  margin-bottom: 1rem;
+}
+
+/* "Missing check-out" badge */
+.cr-status-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+  font-size: 0.73rem;
+  font-weight: 600;
+  background: rgba(204, 32, 32, 0.10);
+  color: var(--c-red);
+  white-space: nowrap;
+}
+
+/* Empty state cell */
+.cr-empty-cell {
+  padding: 1.5rem 1rem;
+  opacity: 0.5;
+  text-align: center;
+}
+
+/* Label above employee chips */
+.cr-chip-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ds-text-muted, rgba(26,26,26,0.42));
+  margin: 0 0 0.4rem;
+}
+
+/* Strengthen action panel sidebar */
+.clock-action-panel {
+  background: rgba(255, 255, 255, 0.72);
+  border-left: 3px solid var(--c-red, #CC2020);
+}
+
+/* Strengthen records panel */
+.clock-records-panel {
+  background: rgba(255, 255, 255, 0.80);
+}
+.clock-records-panel .admin-panel__title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* Remove stale inline margin from filter grid */
+.clock-filter-grid {
+  margin-bottom: 0.6rem;
+}

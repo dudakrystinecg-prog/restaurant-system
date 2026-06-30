@@ -4372,51 +4372,49 @@ function AdminView() {
 
               <div className="admin-stack clock-page-layout__main">
             <div className="admin-panel clock-records-panel p-6">
-              <div className="admin-panel__header admin-panel__header--split">
-                <div>
-                  <h2 className="admin-panel__title text-2xl font-bold">Time Records</h2>
-                  {!isLoading ? (
-                    <p className="admin-panel__subtitle mt-1 text-sm">{recordsResponse.total} total records</p>
-                  ) : null}
+              <div className="admin-panel__header">
+                <h2 className="admin-panel__title text-2xl font-bold">Time Records</h2>
+                {!isLoading ? (
+                  <p className="admin-panel__subtitle mt-1 text-sm">{recordsResponse.total} total records</p>
+                ) : null}
+              </div>
+              <div className="cr-pagination-strip">
+                <label className="admin-subtle-text">Per page</label>
+                <select
+                  value={pageSize}
+                  onChange={(event) => {
+                    setPage(1);
+                    setPageSize(Number(event.target.value));
+                  }}
+                  className="admin-select admin-select--compact"
+                >
+                  {[10, 20, 50].map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => hasPreviousPage && setPage((current) => current - 1)}
+                  disabled={!hasPreviousPage}
+                  className="admin-button admin-button--secondary admin-button--compact"
+                >
+                  Previous
+                </button>
+                <div className="admin-subtle-text">
+                  Page {recordsResponse.totalPages === 0 ? 0 : recordsResponse.page} of{" "}
+                  {recordsResponse.totalPages}
                 </div>
-                <div className="admin-actions-row">
-                  <label className="admin-subtle-text">Per page</label>
-                  <select
-                    value={pageSize}
-                    onChange={(event) => {
-                      setPage(1);
-                      setPageSize(Number(event.target.value));
-                    }}
-                    className="admin-select admin-select--compact"
-                  >
-                    {[10, 20, 50].map((size) => (
-                      <option key={size} value={size}>
-                        {size}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => hasPreviousPage && setPage((current) => current - 1)}
-                    disabled={!hasPreviousPage}
-                    className="admin-button admin-button--secondary admin-button--compact"
-                  >
-                    Previous
-                  </button>
-                  <div className="admin-subtle-text">
-                    Page {recordsResponse.totalPages === 0 ? 0 : recordsResponse.page} of{" "}
-                    {recordsResponse.totalPages}
-                  </div>
-                  <button
-                    onClick={() => hasNextPage && setPage((current) => current + 1)}
-                    disabled={!hasNextPage}
-                    className="admin-button admin-button--primary admin-button--compact"
-                  >
-                    Next
-                  </button>
-                </div>
+                <button
+                  onClick={() => hasNextPage && setPage((current) => current + 1)}
+                  disabled={!hasNextPage}
+                  className="admin-button admin-button--primary admin-button--compact"
+                >
+                  Next
+                </button>
               </div>
 
-              <div className="admin-filters-grid clock-filter-grid" style={{ marginBottom: "1rem" }}>
+              <div className="admin-filters-grid clock-filter-grid">
                 <select
                   value={filters.employeeId}
                   onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, employeeId: event.target.value })); }}
@@ -4441,6 +4439,7 @@ function AdminView() {
                 </div>
               </div>
 
+              <p className="cr-chip-label">Filter by employee</p>
               <div className="cr-emp-chips">
                 {summary.employees.map((item) => (
                   <button
@@ -4455,6 +4454,7 @@ function AdminView() {
                 ))}
               </div>
 
+              <div className="cr-table-wrap">
               <table className="cr-table">
                 <thead>
                   <tr>
@@ -4482,7 +4482,7 @@ function AdminView() {
                     return (
                       <tbody>
                         <tr>
-                          <td colSpan={7} style={{ padding: "1rem", opacity: 0.5 }}>No records found for the selected filters.</td>
+                          <td colSpan={7} className="cr-empty-cell">No records found for the selected filters.</td>
                         </tr>
                       </tbody>
                     );
@@ -4522,9 +4522,7 @@ function AdminView() {
                               </td>
                               <td>
                                 {record.is_open ? (
-                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", padding: "0.2rem 0.6rem", borderRadius: 20, fontSize: "0.73rem", fontWeight: 600, background: "rgba(204,32,32,0.10)", color: "var(--c-red)", whiteSpace: "nowrap" }}>
-                                    Missing check-out
-                                  </span>
+                                  <span className="cr-status-open">Missing check-out</span>
                                 ) : null}
                               </td>
                               <td className="cr-td__muted">{record.entry_mode || "—"}</td>
@@ -4551,6 +4549,7 @@ function AdminView() {
                   });
                 })()}
               </table>
+              </div>
             </div>
               </div>
             </div>
