@@ -2585,17 +2585,24 @@ function AdminView() {
   };
 
   const handleDelete = async (record) => {
-    const deleteLabel = record.entry_mode === "manual"
-      ? `Delete the manual entry for ${record.employee_name} on ${toDateValue(record.recorded_at)}?`
-      : `Delete the record for ${record.employee_name} at ${formatDateTime(record.recorded_at)}?`;
-    const confirmed = await askConfirm({ title: deleteLabel, confirmLabel: "Delete", variant: "danger" });
+    const recordId = record.id;
+    const displayDate = record.recorded_at
+      ? new Date(record.recorded_at).toLocaleDateString("en-CA", { timeZone: TZ, weekday: "long", year: "numeric", month: "long", day: "numeric" })
+      : "";
+    const deleteTitle = record.entry_mode === "manual"
+      ? `Delete manual entry for ${record.employee_name}?`
+      : `Delete record for ${record.employee_name}?`;
+    const deleteDetail = record.entry_mode === "manual"
+      ? `Work date: ${displayDate}`
+      : `Time: ${formatDateTime(record.recorded_at)}`;
+    const confirmed = await askConfirm({ title: deleteTitle, message: deleteDetail, confirmLabel: "Delete", variant: "danger" });
     if (!confirmed) return;
 
     setFeedback("");
     setError("");
 
     try {
-      const response = await adminFetch(`${API_BASE_URL}/admin/time-records/${record.id}`, { method: "DELETE" });
+      const response = await adminFetch(`${API_BASE_URL}/admin/time-records/${recordId}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to delete record.");
       setFeedback("Record marked as deleted successfully.");
