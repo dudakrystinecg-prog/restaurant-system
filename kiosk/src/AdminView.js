@@ -2006,6 +2006,7 @@ function AdminView() {
   const [feedback, setFeedback] = useState("");
   const [payrollPeriods, setPayrollPeriods] = useState([]);
   const [selectedPayroll, setSelectedPayroll] = useState(null);
+  const [payrollView, setPayrollView] = useState("list"); // "list" | "detail"
   const [isGeneratingPayroll, setIsGeneratingPayroll] = useState(false);
   const [showPayrollRules, setShowPayrollRules] = useState(false);
   const [payrollConfig, setPayrollConfig] = useState(null);
@@ -2571,6 +2572,7 @@ function AdminView() {
       if (!response.ok) throw new Error(data.error || "Failed to generate payroll.");
       setFeedback("Payroll generated successfully.");
       setSelectedPayroll(data);
+      setPayrollView("detail");
       setExpandedPayrollItemId(null);
       setPayrollHolidayInputs(buildHolidayInputState(data.items || []));
       await loadAdminData();
@@ -2582,7 +2584,6 @@ function AdminView() {
   };
 
   const handleSelectPayroll = async (payrollId) => {
-    if (selectedPayroll?.id === payrollId) { setSelectedPayroll(null); setAlbertaHolidayRows([]); return; }
     setError("");
     setSelectedPayslip(null);
     setAlbertaHolidayRows([]);
@@ -2591,6 +2592,7 @@ function AdminView() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to load payroll.");
       setSelectedPayroll(data);
+      setPayrollView("detail");
       setExpandedPayrollItemId(null);
       setPayrollHolidayInputs(buildHolidayInputState(data.items || []));
       // Load Alberta holiday rows for this period
@@ -4675,58 +4677,80 @@ function AdminView() {
               </div>
 
               <div className="admin-stack">
-                <div className="admin-panel p-6">
-                  <h2 className="admin-panel__title text-2xl font-bold">Generated periods</h2>
-                  <p className="admin-panel__subtitle mt-1 text-sm">
-                    Choose a payroll period to review the team payout package.
-                  </p>
-                  <div className="admin-payroll-period-list mt-6">
-                    {payrollPeriods.length === 0 ? (
-                      <div className="admin-empty-state">
-                        No payroll has been generated yet.
-                      </div>
-                    ) : null}
-                    {payrollPeriods.map((payroll) => (
-                      <button
-                        key={payroll.id}
-                        type="button"
-                        onClick={() => handleSelectPayroll(payroll.id)}
-                        className={`admin-payroll-period-card ${
-                          selectedPayroll?.id === payroll.id ? "is-selected" : ""
-                        }`}
-                      >
-                        <div className="admin-payroll-period-card__top">
-                          <div>
-                            <div className="admin-payroll-period-card__period">
-                              {new Date(payroll.start_date + "T12:00:00").toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
+                {payrollView === "list" ? (
+                  <div className="admin-panel p-6">
+                    <h2 className="admin-panel__title text-2xl font-bold">Generated periods</h2>
+                    <p className="admin-panel__subtitle mt-1 text-sm">
+                      Choose a payroll period to view details.
+                    </p>
+                    <div className="admin-payroll-period-list mt-6">
+                      {payrollPeriods.length === 0 ? (
+                        <div className="admin-empty-state">
+                          No payroll has been generated yet.
+                        </div>
+                      ) : null}
+                      {payrollPeriods.map((payroll) => (
+                        <button
+                          key={payroll.id}
+                          type="button"
+                          onClick={() => handleSelectPayroll(payroll.id)}
+                          className="admin-payroll-period-card"
+                        >
+                          <div className="admin-payroll-period-card__top">
+                            <div>
+                              <div className="admin-payroll-period-card__period">
+                                {new Date(payroll.start_date + "T12:00:00").toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
+                              </div>
+                              <div className="admin-payroll-period-card__meta">
+                                {payroll.start_date} to {payroll.end_date} &middot; {getPayFrequencyLabel(payroll.pay_frequency, payrollConfig)}
+                              </div>
                             </div>
-                            <div className="admin-payroll-period-card__meta">
-                              {payroll.start_date} to {payroll.end_date} &middot; {getPayFrequencyLabel(payroll.pay_frequency, payrollConfig)}
-                            </div>
+                            <span className={`admin-badge ${payroll.status === "approved" ? "admin-badge--success" : "admin-badge--neutral"}`}>
+                              {payroll.status}
+                            </span>
                           </div>
-                          <span className={`admin-badge ${payroll.status === "approved" ? "admin-badge--success" : "admin-badge--neutral"}`}>
-                            {payroll.status}
-                          </span>
-                        </div>
-                        <div className="admin-payroll-period-card__stats">
-                          <div><span>Hours</span><strong>{Number(payroll.total_hours || 0).toFixed(2)} h</strong></div>
-                          <div><span>Gross</span><strong>${Number(payroll.total_gross_pay || 0).toFixed(2)}</strong></div>
-                          <div><span>Total earnings</span><strong>${Number(payroll.total_earnings || 0).toFixed(2)}</strong></div>
-                        </div>
-                      </button>
-                    ))}
+                          <div className="admin-payroll-period-card__stats">
+                            <div><span>Hours</span><strong>{Number(payroll.total_hours || 0).toFixed(2)} h</strong></div>
+                            <div><span>Gross</span><strong>${Number(payroll.total_gross_pay || 0).toFixed(2)}</strong></div>
+                            <div><span>Total earnings</span><strong>${Number(payroll.total_earnings || 0).toFixed(2)}</strong></div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-
-                {selectedPayroll && <div className="admin-panel p-6">
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem" }}>
-                    <div>
-                      <h2 className="admin-panel__title text-2xl font-bold">Payroll details</h2>
+                ) : (
+                  <div className="admin-panel p-6">
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem", paddingBottom: "1.25rem", borderBottom: "1px solid var(--c-border)" }}>
+                      <button
+                        type="button"
+                        onClick={() => { setPayrollView("list"); setSelectedPayroll(null); setAlbertaHolidayRows([]); setSelectedPayslip(null); }}
+                        className="admin-button admin-button--secondary admin-button--compact"
+                      >
+                        ← Back to list
+                      </button>
+                      <div style={{ flex: 1 }}>
+                        <h2 className="admin-panel__title text-2xl font-bold">
+                          {selectedPayroll
+                            ? new Date(selectedPayroll.start_date + "T12:00:00").toLocaleDateString("en-CA", { month: "long", year: "numeric" })
+                            : "Payroll details"}
+                        </h2>
+                        {selectedPayroll && (
+                          <p className="admin-panel__subtitle mt-1 text-sm">
+                            {selectedPayroll.start_date} to {selectedPayroll.end_date} &middot; {getPayFrequencyLabel(selectedPayroll.pay_frequency, payrollConfig)}
+                          </p>
+                        )}
+                      </div>
+                      {selectedPayroll && (
+                        <span className={`admin-badge ${selectedPayroll.status === "approved" ? "admin-badge--success" : "admin-badge--neutral"}`}>
+                          {selectedPayroll.status}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem" }}>
                       <p className="admin-panel__subtitle mt-1 text-sm">
                         Review payroll totals and employee-level payout details before approval.
                       </p>
-                    </div>
-                    <div className="admin-actions-row">
+                      <div className="admin-actions-row">
                       {selectedPayroll ? (
                         <button
                           onClick={() => handleExportPayroll(selectedPayroll.id)}
@@ -5183,7 +5207,8 @@ function AdminView() {
                       Select a payroll period to view the details.
                     </div>
                   )}
-                </div>}
+                  </div>
+                )}
               </div>
             </div>
           </>
