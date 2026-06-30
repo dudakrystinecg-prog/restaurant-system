@@ -3352,11 +3352,7 @@ function generatePayroll({
       const regularHours = Number(employee.regular_hours);
       const overtimeHours = Number(employee.overtime_hours);
       const regularPay = roundMoney(regularHours * employeeRate);
-      const overtimePay = roundMoney(
-        overtimeHours *
-          employeeRate *
-          PAYROLL_OVERTIME_RULE.overtimeMultiplier,
-      );
+      const overtimePay = 0; // Overtime disabled
       const grossPay = roundMoney(regularPay + overtimePay);
       const holidayAdjustment = {
         holidayHours: employee.holiday_hours || 0,
@@ -4085,15 +4081,10 @@ function calculatePayrollHours({ startDate, endDate }) {
       const clockHours = Number(dailyHours.clock_hours || 0);
       const manualHours = Number(dailyHours.manual_hours || 0);
 
-      regularHours += Math.min(
-        clockHours,
-        PAYROLL_OVERTIME_RULE.regularHoursPerDay,
-      );
+      // Overtime disabled — all clock hours are regular hours
+      regularHours += clockHours;
       regularHours += manualHours;
-      overtimeHours += Math.max(
-        0,
-        clockHours - PAYROLL_OVERTIME_RULE.regularHoursPerDay,
-      );
+      // overtimeHours remains 0
     }
 
     const totalHours = regularHours + overtimeHours;

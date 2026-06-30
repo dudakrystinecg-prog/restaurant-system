@@ -4577,9 +4577,7 @@ function AdminView() {
                     {showPayrollRules && (
                       <div className="admin-note" style={{ marginTop: "0.75rem" }}>
                         <div>
-                          Overtime: {payrollConfig.overtime_rule.type} above{" "}
-                          {payrollConfig.overtime_rule.regularHoursPerDay}h per day at{" "}
-                          {payrollConfig.overtime_rule.overtimeMultiplier}x
+                          Overtime: disabled — all worked hours are calculated as regular hours
                         </div>
                         {payrollConfig.holiday_pay_enabled ? (
                           <div>Holiday pay: {payrollConfig.holiday_pay_rule.description}</div>
