@@ -30,7 +30,6 @@ const path = require("path");
 const fs   = require("fs");
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const XLSX_PATH   = path.resolve("C:/Users/HP/Downloads/2026 Time sheet.xlsx");
 const DB_PATH     = process.env.DATABASE_PATH || "/var/www/restaurant-system/data/restaurant-system.db";
 const BACKUP_DIR  = "/var/www/restaurant-system-backups";
 const BACKUP_PREFIX = "restaurant-system.before-timesheet-import-";
@@ -53,18 +52,29 @@ function tzOffset(monthIndex) {
 
 // ─── CLI flags ────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
-const DRY_RUN          = args.includes("--dry-run");
-const DO_IMPORT        = args.includes("--import");
+const DRY_RUN           = args.includes("--dry-run");
+const DO_IMPORT         = args.includes("--import");
 const SKIP_BACKUP_CHECK = args.includes("--skip-backup-check");
+
+// --file <path>  (required)
+const fileArgIndex = args.indexOf("--file");
+const XLSX_PATH = fileArgIndex !== -1 && args[fileArgIndex + 1]
+  ? path.resolve(args[fileArgIndex + 1])
+  : null;
 
 if (!DRY_RUN && !DO_IMPORT) {
   console.error("Usage:");
-  console.error("  node scripts/import-timesheet.js --dry-run");
-  console.error("  node scripts/import-timesheet.js --import   (backup the DB first — see header comment)");
+  console.error('  node scripts/import-timesheet.js --dry-run --file "imports/2026 Time sheet.xlsx"');
+  console.error('  node scripts/import-timesheet.js --import  --file "imports/2026 Time sheet.xlsx"');
   process.exit(1);
 }
 if (DRY_RUN && DO_IMPORT) {
   console.error("Error: cannot use both --dry-run and --import.");
+  process.exit(1);
+}
+if (!XLSX_PATH) {
+  console.error('Error: --file <path> is required.');
+  console.error('Example: --file "imports/2026 Time sheet.xlsx"');
   process.exit(1);
 }
 
