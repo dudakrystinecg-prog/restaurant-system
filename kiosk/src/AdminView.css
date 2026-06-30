@@ -112,15 +112,15 @@ body.admin-bg {
 }
 
 .ds-sidebar__logo {
-  width: 176px; height: 176px;
-  border-radius: 16px;
+  width: 80px; height: 80px;
+  border-radius: 12px;
   object-fit: cover;
   box-shadow: 0 4px 16px rgba(0,0,0,0.30);
 }
 
 .ds-sidebar__brand-name {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: #F0EDE8;
   letter-spacing: 0.01em;
 }
@@ -172,10 +172,12 @@ body.admin-bg {
 }
 
 .ds-nav-btn.is-active {
-  background: rgba(255,255,255,0.15);
+  background: rgba(200,168,112,0.18);
   color: #F0EDE8;
-  font-weight: 600;
+  font-weight: 700;
   backdrop-filter: blur(8px);
+  border-left: 2px solid rgba(200,168,112,0.75);
+  padding-left: 8px;
 }
 
 .ds-nav-btn__icon {
@@ -307,20 +309,21 @@ body.admin-bg {
 }
 
 .ds-welcome-bar__greeting {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 21px;
+  font-weight: 700;
   color: var(--c-text-primary);
+  letter-spacing: -0.01em;
 }
 
 .ds-welcome-bar__sep {
-  width: 1px; height: 1em;
+  width: 1px; height: 1.2em;
   background: var(--c-border);
 }
 
 .ds-welcome-bar__date {
   font-size: 13px;
-  color: var(--c-red);
-  font-weight: 500;
+  color: var(--c-wood);
+  font-weight: 600;
 }
 
 .ds-welcome-bar__period {
@@ -331,7 +334,7 @@ body.admin-bg {
 
 .ds-welcome-bar__time {
   margin-left: auto;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--c-text-primary);
   font-variant-numeric: tabular-nums;
@@ -573,6 +576,51 @@ body.admin-bg {
   font-size: 0.8rem;
   color: var(--c-text-muted);
   margin-top: 2px;
+}
+
+/* Page-level section heading utilities */
+.ds-page-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ds-text);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.ds-page-subtitle {
+  font-size: 0.82rem;
+  color: var(--ds-text-muted);
+  margin-top: 3px;
+  font-weight: 500;
+}
+
+/* Empty state */
+.ds-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 3.5rem 1.5rem;
+  text-align: center;
+}
+
+.ds-empty-state__icon {
+  opacity: 0.22;
+  color: var(--ds-text-muted);
+}
+
+.ds-empty-state__title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ds-text-soft);
+}
+
+.ds-empty-state__body {
+  font-size: 0.84rem;
+  color: var(--ds-text-muted);
+  max-width: 280px;
+  line-height: 1.55;
 }
 
 /* ── Toolbar ──────────────────────────────────────────────────── */
@@ -2866,7 +2914,7 @@ textarea {
   font-size: 1.05rem;
   line-height: 1.25;
   font-weight: 800;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
 }
 
 .admin-panel__subtitle,
@@ -2963,7 +3011,7 @@ textarea {
 .audit-tab-btn,
 .cr-action-btn,
 .admin-employee-card-btn {
-  border: 1px solid var(--ds-border);
+  border: 1px solid var(--ds-border-strong);
   background: var(--ds-surface);
   color: var(--ds-text);
 }
@@ -3073,8 +3121,8 @@ textarea {
 .emp-status-badge,
 .ps-badge,
 .cr-type-badge {
-  min-height: 24px;
-  padding: 0.2rem 0.65rem;
+  min-height: 26px;
+  padding: 0.25rem 0.75rem;
   border-radius: 99px;
   font-size: 0.68rem;
   font-weight: 800;
@@ -3093,7 +3141,7 @@ textarea {
 .emp-table td,
 .emp-table__row td,
 .cr-table td {
-  padding: 0.82rem 1rem;
+  padding: 0.95rem 1rem;
   color: var(--ds-text);
   border-bottom: 1px solid rgba(8,8,11,0.07);
 }
@@ -3387,4 +3435,73 @@ textarea {
   .alberta-payslip-review__row {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Phase 1: Global visual system additions ──────────────────── */
+
+/* Section divider */
+.ds-section-divider {
+  height: 1px;
+  background: var(--ds-border);
+  margin: var(--ds-space-5) 0;
+}
+
+/* Card header with split layout */
+.ds-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+  margin-bottom: var(--ds-space-4);
+}
+
+.ds-card-header__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Page header block (above a section) */
+.ds-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+  margin-bottom: var(--ds-space-4);
+}
+
+.ds-page-header__left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Danger button — stronger border */
+.admin-button--danger {
+  border: 1px solid rgba(215,25,32,0.22) !important;
+  background: rgba(215,25,32,0.07) !important;
+  color: var(--ds-red) !important;
+  font-weight: 700;
+}
+
+.admin-button--danger:hover {
+  background: rgba(215,25,32,0.13) !important;
+}
+
+/* Success/approve button — dark solid */
+.admin-button--success {
+  background: #1A6B40 !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 4px 14px rgba(26,107,64,0.28);
+}
+
+.admin-button--success:hover {
+  background: #155934 !important;
+  box-shadow: 0 6px 18px rgba(26,107,64,0.36);
+}
+
+/* Sidebar brand padding tighter now logo is smaller */
+.ds-sidebar__brand {
+  padding: 1.25rem 1.25rem 0.75rem;
 }
