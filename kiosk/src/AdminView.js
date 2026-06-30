@@ -2337,6 +2337,7 @@ function AdminView() {
     adminFetch,
     adminToken,
     filters,
+    openOnly,
     page,
     pageSize,
     employeeAuditFilters,
@@ -4554,7 +4555,10 @@ function AdminView() {
                   </tr>
                 </thead>
                 {(() => {
-                  const grouped = (recordsResponse.items || []).reduce((acc, record) => {
+                  const visibleRecords = (recordsResponse.items || []).filter(
+                    (record) => filters.recordStatus === "deleted" || filters.recordStatus === "all" || !record.deleted_at
+                  );
+                  const grouped = visibleRecords.reduce((acc, record) => {
                     const day = record.recorded_at
                       ? new Date(record.recorded_at).toLocaleDateString("en-CA", { timeZone: TZ })
                       : "unknown";
