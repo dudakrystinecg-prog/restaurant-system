@@ -529,7 +529,7 @@ if (invalidRows.length > 0) {
 
 console.log(`\n── Summary ──`);
 console.log(`  Total shifts parsed:      ${parsed.length}`);
-console.log(`  Shifts skipped (unmatched): ${willSkipUnmatched / 1} names`);
+console.log(`  Shifts skipped (unmatched): ${willSkipUnmatched} shifts (${unmatchedNames.size} employee${unmatchedNames.size !== 1 ? "s" : ""}: ${[...unmatchedNames].join(", ") || "none"})`);
 console.log(`  Shifts skipped (duplicate): ${willSkipDup}`);
 console.log(`  Records to insert (pairs):  ${willInsert} (${willInsert / 2} check-in/check-out pairs)`);
 
@@ -541,7 +541,8 @@ if (DRY_RUN) {
   console.log("    cp /var/www/restaurant-system/data/restaurant-system.db \\");
   console.log("       /var/www/restaurant-system-backups/restaurant-system.before-timesheet-import-$(date +%Y%m%d-%H%M%S).db");
   console.log("");
-  console.log("    node scripts/import-timesheet.js --import");
+  const fileArg = XLSX_PATH ? `--file "${XLSX_PATH}"` : '--file "imports/2026 Time sheet.xlsx"';
+  console.log(`    node scripts/import-timesheet.js --import ${fileArg}`);
 }
 
 if (DO_IMPORT) {
