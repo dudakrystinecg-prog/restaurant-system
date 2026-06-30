@@ -480,6 +480,8 @@ app.post("/api/admin/employees", requireAdminAuth, (req, res) => {
     name,
     pin,
     active,
+    show_in_kiosk: showInKiosk,
+    is_active_employee: isActiveEmployee,
     default_hourly_rate: defaultHourlyRate,
     default_pay_frequency: defaultPayFrequency,
     start_date: startDate,
@@ -521,6 +523,8 @@ app.post("/api/admin/employees", requireAdminAuth, (req, res) => {
     name: String(name).trim(),
     pin: String(pin).trim(),
     active: normalizeEmployeeActive(active !== false),
+    showInKiosk: showInKiosk === undefined ? 1 : normalizeEmployeeActive(showInKiosk),
+    isActiveEmployee: isActiveEmployee === undefined ? 1 : normalizeEmployeeActive(isActiveEmployee),
     defaultHourlyRate: isSalaried ? null : Number(defaultHourlyRate),
     defaultPayFrequency: isSalaried ? null : normalizePayFrequency(defaultPayFrequency),
     startDate: String(startDate),
@@ -551,6 +555,8 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
     name,
     pin,
     active,
+    show_in_kiosk: showInKiosk,
+    is_active_employee: isActiveEmployee,
     default_hourly_rate: defaultHourlyRate,
     default_pay_frequency: defaultPayFrequency,
     start_date: startDate,
@@ -607,6 +613,8 @@ app.put("/api/admin/employees/:id", requireAdminAuth, (req, res) => {
         ? null
         : String(pin).trim(),
     active: active === undefined ? null : normalizeEmployeeActive(active),
+    showInKiosk: showInKiosk === undefined ? undefined : normalizeEmployeeActive(showInKiosk),
+    isActiveEmployee: isActiveEmployee === undefined ? undefined : normalizeEmployeeActive(isActiveEmployee),
     defaultHourlyRate:
       isSalaried ? null : (defaultHourlyRate === undefined ? null : Number(defaultHourlyRate)),
     defaultPayFrequency:
@@ -1317,7 +1325,7 @@ app.post("/api/admin/time-records", requireAdminAuth, (req, res) => {
   const normalizedEmployeeId = Number(employeeId);
   const employee = findEmployeeById(normalizedEmployeeId);
 
-  if (!normalizedEmployeeId || !employee || employee.active !== 1) {
+  if (!normalizedEmployeeId || !employee || employee.show_in_kiosk !== 1 || employee.is_active_employee !== 1) {
     return res.status(404).json({
       error: "Funcionario nao encontrado.",
     });
@@ -1681,7 +1689,7 @@ app.post("/api/time", (req, res) => {
   const normalizedEmployeeId = Number(employeeId);
   const employee = findEmployeeById(normalizedEmployeeId);
 
-  if (!normalizedEmployeeId || !employee || employee.active !== 1) {
+  if (!normalizedEmployeeId || !employee || employee.show_in_kiosk !== 1 || employee.is_active_employee !== 1) {
     return res.status(404).json({
       error: "Funcionario nao encontrado.",
     });

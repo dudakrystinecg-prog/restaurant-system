@@ -61,6 +61,8 @@ const initialEmployeeFormState = {
   name: "",
   pin: "",
   active: true,
+  show_in_kiosk: true,
+  is_active_employee: true,
   defaultHourlyRate: "",
   defaultPayFrequency: "",
   startDate: "",
@@ -1762,7 +1764,7 @@ function MessagesView({ adminFetch, employees }) {
   const [draftStatus, setDraftStatus] = useState("");
   const [sentHistory, setSentHistory] = useState([]);
 
-  const employeesWithEmail = (employees || []).filter(e => e.email && e.active !== 0);
+  const employeesWithEmail = (employees || []).filter(e => e.email && e.is_active_employee !== 0);
   const allSelected = employeesWithEmail.length > 0 && employeesWithEmail.every(e => selectedIds.includes(e.id));
 
   useEffect(() => {
@@ -2208,6 +2210,8 @@ function AdminView() {
               name: employee.name,
               pin: "",
               active: Boolean(employee.active),
+              show_in_kiosk: employee.show_in_kiosk !== undefined ? Boolean(employee.show_in_kiosk) : true,
+              is_active_employee: employee.is_active_employee !== undefined ? Boolean(employee.is_active_employee) : true,
               pay_type: employee.pay_type || "hourly",
               annual_salary: employee.annual_salary != null ? String(employee.annual_salary) : "",
               vacation_pay_pct: employee.vacation_pay_pct != null ? employee.vacation_pay_pct : 4,
@@ -2906,6 +2910,8 @@ function AdminView() {
           name: draft.name,
           ...(draft.pin?.trim() ? { pin: draft.pin.trim() } : {}),
           active: draft.active,
+          show_in_kiosk: draft.show_in_kiosk,
+          is_active_employee: draft.is_active_employee,
           default_hourly_rate: isSalariedDraft ? null : draft.defaultHourlyRate,
           default_pay_frequency: isSalariedDraft ? null : draft.defaultPayFrequency,
           start_date: draft.startDate,
@@ -2957,6 +2963,8 @@ function AdminView() {
           name: employeeCreateForm.name,
           pin: employeeCreateForm.pin,
           active: employeeCreateForm.active,
+          show_in_kiosk: employeeCreateForm.show_in_kiosk,
+          is_active_employee: employeeCreateForm.is_active_employee,
           default_hourly_rate: isSalariedCreate ? null : employeeCreateForm.defaultHourlyRate,
           default_pay_frequency: isSalariedCreate ? null : employeeCreateForm.defaultPayFrequency,
           start_date: employeeCreateForm.startDate,
@@ -3159,7 +3167,7 @@ function AdminView() {
             return null;
           }
 
-          const activeCount = adminEmployees.filter(e => e.active).length;
+          const activeCount = adminEmployees.filter(e => e.is_active_employee).length;
           const totalHours = summary.totals.payroll_ready_hours || 0;
           const clockTotalHours = summary.totals.total_hours || 0;
           const totalRecords = summary.totals.total_records || 0;
@@ -3543,17 +3551,33 @@ function AdminView() {
                 <label className="admin-checkbox-card">
                   <input
                     type="checkbox"
-                    checked={employeeCreateForm.active}
+                    checked={employeeCreateForm.is_active_employee}
                     onChange={(event) =>
                       setEmployeeCreateForm((current) => ({
                         ...current,
-                        active: event.target.checked,
+                        is_active_employee: event.target.checked,
                       }))
                     }
                   />
                   <span>
-                    <strong>Active employee</strong>
-                    <small>Shows this employee in the kiosk list.</small>
+                    <strong>Current employee</strong>
+                    <small>Person is currently employed. Uncheck for former employees.</small>
+                  </span>
+                </label>
+                <label className="admin-checkbox-card">
+                  <input
+                    type="checkbox"
+                    checked={employeeCreateForm.show_in_kiosk}
+                    onChange={(event) =>
+                      setEmployeeCreateForm((current) => ({
+                        ...current,
+                        show_in_kiosk: event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <strong>Show in kiosk</strong>
+                    <small>Shows this employee on the check-in/out screen.</small>
                   </span>
                 </label>
 
@@ -3634,9 +3658,12 @@ function AdminView() {
                           </div>
                         </td>
                         <td>
-                          <span className={`emp-status-badge ${(draft.active !== undefined ? draft.active : employee.active) ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>
-                            {(draft.active !== undefined ? draft.active : employee.active) ? "Active" : "Hidden"}
+                          <span className={`emp-status-badge ${(draft.is_active_employee !== undefined ? draft.is_active_employee : employee.is_active_employee) ? "emp-status-badge--active" : "emp-status-badge--inactive"}`}>
+                            {(draft.is_active_employee !== undefined ? draft.is_active_employee : employee.is_active_employee) ? "Current" : "Former"}
                           </span>
+                          {!(draft.show_in_kiosk !== undefined ? draft.show_in_kiosk : employee.show_in_kiosk) && (
+                            <span className="emp-status-badge emp-status-badge--inactive" style={{ marginLeft: 4 }}>Hidden from kiosk</span>
+                          )}
                         </td>
                         <td className="emp-table__data">
                           {isSalaried
@@ -3952,22 +3979,38 @@ function AdminView() {
 
                             <div className="admin-employee-detail__actions">
                               <div className="admin-note admin-note--soft">
-                                <strong>Hide / deactivate</strong>
+                                <strong>Employment status</strong>
                                 <label className="admin-switch">
                                   <input
                                     type="checkbox"
-                                    checked={Boolean(draft.active)}
+                                    checked={Boolean(draft.is_active_employee !== undefined ? draft.is_active_employee : employee.is_active_employee)}
                                     onChange={(event) =>
                                       setEmployeeSettingsDrafts((current) => ({
                                         ...current,
                                         [employee.id]: {
                                           ...current[employee.id],
-                                          active: event.target.checked,
+                                          is_active_employee: event.target.checked,
                                         },
                                       }))
                                     }
                                   />
-                                  <span>{draft.active ? "Employee is visible in the kiosk" : "Employee is hidden from the kiosk"}</span>
+                                  <span>{(draft.is_active_employee !== undefined ? draft.is_active_employee : employee.is_active_employee) ? "Current employee" : "Former employee"}</span>
+                                </label>
+                                <label className="admin-switch" style={{ marginTop: 8 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(draft.show_in_kiosk !== undefined ? draft.show_in_kiosk : employee.show_in_kiosk)}
+                                    onChange={(event) =>
+                                      setEmployeeSettingsDrafts((current) => ({
+                                        ...current,
+                                        [employee.id]: {
+                                          ...current[employee.id],
+                                          show_in_kiosk: event.target.checked,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                  <span>{(draft.show_in_kiosk !== undefined ? draft.show_in_kiosk : employee.show_in_kiosk) ? "Visible in kiosk" : "Hidden from kiosk"}</span>
                                 </label>
                               </div>
 

@@ -593,7 +593,9 @@ function ensureColumnExists(tableName, columnName, columnDefinition) {
 
   if (!hasColumn) {
     db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
+    return true; // column was just added — caller can run one-time migration
   }
+  return false; // column already existed — no migration needed
 }
 
 function initializeDatabase() {
@@ -933,6 +935,18 @@ function initializeDatabase() {
   ensureColumnExists("admin_sessions", "user_name", "TEXT");
   ensureColumnExists("admin_users", "active", "INTEGER NOT NULL DEFAULT 1");
 
+  // Employee status / kiosk visibility columns (added after initial schema)
+  const showInKioskAdded = ensureColumnExists("employees", "show_in_kiosk", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumnExists("employees", "is_active_employee", "INTEGER NOT NULL DEFAULT 1");
+
+  // One-time migration: seed show_in_kiosk from active only on the first startup
+  // after the column is created. Never runs again — show_in_kiosk is the source of
+  // truth from this point forward. is_active_employee is NOT seeded from active;
+  // all existing employees stay is_active_employee=1 (current employee).
+  if (showInKioskAdded) {
+    db.prepare(`UPDATE employees SET show_in_kiosk = active`).run();
+  }
+
   // Pay & Send columns
   ensureColumnExists("payroll_items", "send_status", "TEXT NOT NULL DEFAULT 'pending'");
   ensureColumnExists("payroll_items", "sent_at", "TEXT");
@@ -1009,7 +1023,7 @@ function listEmployees() {
       `
       SELECT id, name
       FROM employees
-      WHERE active = 1
+      WHERE show_in_kiosk = 1 AND is_active_employee = 1
       ORDER BY name ASC
       `,
     )
@@ -1024,6 +1038,8 @@ function listAdminEmployees() {
         id,
         name,
         active,
+        show_in_kiosk,
+        is_active_employee,
         default_hourly_rate,
         default_pay_frequency,
         start_date,
@@ -1091,7 +1107,7 @@ function listActiveSalariedEmployees() {
     SELECT id, name, start_date, annual_salary, vacation_pay_pct,
            federal_claim_amount, provincial_claim_amount
     FROM employees
-    WHERE active = 1 AND pay_type = 'salaried' AND annual_salary > 0
+    WHERE is_active_employee = 1 AND pay_type = 'salaried' AND annual_salary > 0
     ORDER BY name ASC
   `).all();
 }
@@ -1142,6 +1158,8 @@ function findEmployeeById(employeeId) {
         pin,
         pin_hash,
         active,
+        show_in_kiosk,
+        is_active_employee,
         default_hourly_rate,
         default_pay_frequency,
         start_date,
@@ -1164,6 +1182,8 @@ function updateEmployeePayrollSettings({
   name,
   pin,
   active,
+  showInKiosk = undefined,
+  isActiveEmployee = undefined,
   defaultHourlyRate,
   defaultPayFrequency,
   startDate,
@@ -1199,6 +1219,8 @@ function updateEmployeePayrollSettings({
       pin = '',
       pin_hash = ?,
       active = COALESCE(?, active),
+      show_in_kiosk = CASE WHEN ? IS NULL THEN show_in_kiosk ELSE ? END,
+      is_active_employee = CASE WHEN ? IS NULL THEN is_active_employee ELSE ? END,
       default_hourly_rate = ?,
       default_pay_frequency = ?,
       start_date = COALESCE(?, start_date),
@@ -1223,6 +1245,10 @@ function updateEmployeePayrollSettings({
     name,
     nextPinHash,
     active,
+    showInKiosk === undefined ? null : showInKiosk,
+    showInKiosk === undefined ? null : showInKiosk,
+    isActiveEmployee === undefined ? null : isActiveEmployee,
+    isActiveEmployee === undefined ? null : isActiveEmployee,
     defaultHourlyRate,
     defaultPayFrequency,
     startDate,
@@ -1284,6 +1310,8 @@ function createEmployee({
   name,
   pin,
   active = 1,
+  showInKiosk = 1,
+  isActiveEmployee = 1,
   defaultHourlyRate = null,
   defaultPayFrequency = null,
   startDate,
@@ -1302,6 +1330,8 @@ function createEmployee({
         pin,
         pin_hash,
         active,
+        show_in_kiosk,
+        is_active_employee,
         default_hourly_rate,
         default_pay_frequency,
         start_date,
@@ -1311,7 +1341,7 @@ function createEmployee({
         annual_salary,
         vacation_pay_pct
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -1319,6 +1349,8 @@ function createEmployee({
       "",
       pinHash,
       active,
+      showInKiosk,
+      isActiveEmployee,
       defaultHourlyRate,
       defaultPayFrequency,
       startDate,
@@ -1733,7 +1765,7 @@ function cleanupAdminLoginAttempts(referenceIso) {
 function verifyEmployeePin(employeeId, pin) {
   const employee = findEmployeeById(employeeId);
 
-  if (!employee || employee.active !== 1) {
+  if (!employee || employee.show_in_kiosk !== 1 || employee.is_active_employee !== 1) {
     return null;
   }
 
