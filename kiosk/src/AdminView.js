@@ -4720,7 +4720,7 @@ function AdminView() {
                   </div>
                 ) : (
                   <div className="admin-panel p-6">
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem", paddingBottom: "1.25rem", borderBottom: "1px solid var(--c-border)" }}>
+                    <div className="payroll-detail-header">
                       <button
                         type="button"
                         onClick={() => { setPayrollView("list"); setSelectedPayroll(null); setAlbertaHolidayRows([]); setSelectedPayslip(null); }}
@@ -4746,7 +4746,7 @@ function AdminView() {
                         </span>
                       )}
                     </div>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem" }}>
+                    <div className="payroll-detail-actions-row">
                       <p className="admin-panel__subtitle mt-1 text-sm">
                         Review payroll totals and employee-level payout details before approval.
                       </p>
