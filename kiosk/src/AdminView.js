@@ -4694,7 +4694,7 @@ function AdminView() {
                           key={payroll.id}
                           type="button"
                           onClick={() => handleSelectPayroll(payroll.id)}
-                          className="admin-payroll-period-card"
+                          className={`admin-payroll-period-card admin-payroll-period-card--${payroll.status}`}
                         >
                           <div className="admin-payroll-period-card__top">
                             <div>
@@ -4813,37 +4813,37 @@ function AdminView() {
                             {selectedPayroll.pay_date || selectedPayroll.end_date}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--earnings">
                           <div className="text-sm admin-subtle-text">Gross</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_gross_pay.toFixed(2)}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--earnings">
                           <div className="text-sm admin-subtle-text">Total earnings</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_earnings.toFixed(2)}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--vacation">
                           <div className="text-sm admin-subtle-text">Vacation paid now</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_vacation_payout.toFixed(2)}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--vacation">
                           <div className="text-sm admin-subtle-text">Vacation accrued</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_vacation_accrued.toFixed(2)}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--deduction">
                           <div className="text-sm admin-subtle-text">CPP employer</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_cpp_employer.toFixed(2)}
                           </div>
                         </div>
-                        <div className="admin-metric-card">
+                        <div className="admin-metric-card admin-metric-card--deduction">
                           <div className="text-sm admin-subtle-text">EI employer</div>
                           <div className="font-semibold">
                             ${selectedPayroll.totals.total_ei_employer.toFixed(2)}
@@ -4914,7 +4914,7 @@ function AdminView() {
                               {isExpanded ? (
                                 <div className="admin-payroll-item-card__detail">
                                   <div className="admin-payroll-detail-grid">
-                                    <div className="admin-payroll-detail-card">
+                                    <div className="admin-payroll-detail-card admin-payroll-detail-card--earnings">
                                       <h3 className="admin-payroll-detail-card__title">Earnings</h3>
                                       <div className="admin-payroll-detail-list">
                                         <div><span>Gross</span><strong>${item.gross_pay.toFixed(2)}</strong></div>
@@ -4925,7 +4925,7 @@ function AdminView() {
                                       </div>
                                     </div>
 
-                                    <div className="admin-payroll-detail-card">
+                                    <div className="admin-payroll-detail-card admin-payroll-detail-card--deduction">
                                       <h3 className="admin-payroll-detail-card__title">Deductions</h3>
                                       <div className="admin-payroll-detail-list">
                                         <div><span>Federal</span><strong>${item.federal_tax.toFixed(2)}</strong></div>

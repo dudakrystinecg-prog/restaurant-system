@@ -1252,12 +1252,37 @@ body.admin-bg {
 }
 
 .admin-metric-card {
-  background: var(--glass-white);
-  backdrop-filter: var(--glass-blur);
-  border-radius: 12px;
+  background: rgba(255,255,255,0.80);
+  border-radius: 10px;
   padding: 0.9rem 1rem;
-  box-shadow: var(--glass-shadow);
+  border: 0.5px solid rgba(26,26,26,0.10);
+  border-left: 4px solid rgba(26,26,26,0.12);
 }
+
+/* Palette C metric card variants */
+.admin-metric-card--earnings {
+  background: #EAF3DE;
+  border-color: #97C459;
+  border-left-color: #639922;
+}
+.admin-metric-card--earnings .admin-subtle-text { color: #3B6D11; }
+.admin-metric-card--earnings .font-semibold      { color: #173404; }
+
+.admin-metric-card--vacation {
+  background: #E6F1FB;
+  border-color: #85B7EB;
+  border-left-color: #378ADD;
+}
+.admin-metric-card--vacation .admin-subtle-text { color: #185FA5; }
+.admin-metric-card--vacation .font-semibold      { color: #042C53; }
+
+.admin-metric-card--deduction {
+  background: #FAEEDA;
+  border-color: #EF9F27;
+  border-left-color: #BA7517;
+}
+.admin-metric-card--deduction .admin-subtle-text { color: #854F0B; }
+.admin-metric-card--deduction .font-semibold      { color: #412402; }
 
 /* ── Payslip preview area ─────────────────────────────────────── */
 .admin-payslip-preview-area {
@@ -1851,25 +1876,31 @@ pre {
 
 .admin-payroll-period-card {
   width: 100%;
-  background: var(--glass-white);
-  backdrop-filter: var(--glass-blur);
-  border-radius: 12px;
+  background: rgba(255,255,255,0.85);
+  border-radius: 10px;
   padding: 1rem 1.1rem;
   text-align: left;
   cursor: pointer;
-  box-shadow: var(--glass-shadow);
-  border: none;
-  transition: transform 0.15s, box-shadow 0.15s;
+  border: 0.5px solid rgba(26,26,26,0.10);
+  border-left: 4px solid rgba(138,128,120,0.35);
+  transition: border-left-color 0.15s, background 0.15s;
 }
 
 .admin-payroll-period-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(26,26,26,0.10);
+  background: rgba(255,255,255,0.98);
+  border-left-color: rgba(138,128,120,0.60);
 }
 
-.admin-payroll-period-card.is-selected {
-  background: rgba(204,32,32,0.06);
-  box-shadow: 0 8px 24px rgba(204,32,32,0.12);
+.admin-payroll-period-card--approved {
+  border-left-color: #639922;
+}
+.admin-payroll-period-card--approved:hover {
+  border-left-color: #3B6D11;
+  background: #f5fbee;
+}
+
+.admin-payroll-period-card--draft {
+  border-left-color: rgba(138,128,120,0.50);
 }
 
 .admin-payroll-period-card__top,
@@ -1893,8 +1924,9 @@ pre {
 
 .admin-payroll-period-card__stats div,
 .admin-payroll-item-card__summary div {
-  background: rgba(255,255,255,0.55);
-  border-radius: 8px;
+  background: rgba(255,255,255,0.70);
+  border: 0.5px solid rgba(26,26,26,0.07);
+  border-radius: 7px;
   padding: 0.5rem 0.65rem;
 }
 
@@ -1918,15 +1950,17 @@ pre {
 
 /* Payroll item card */
 .admin-payroll-item-card {
-  background: var(--glass-white);
-  backdrop-filter: var(--glass-blur);
-  border-radius: 12px;
+  background: rgba(255,255,255,0.85);
+  border-radius: 10px;
   padding: 1rem 1.1rem;
-  box-shadow: var(--glass-shadow);
+  border: 0.5px solid rgba(26,26,26,0.10);
+  border-left: 4px solid rgba(138,128,120,0.30);
+  transition: border-left-color 0.15s;
 }
 
 .admin-payroll-item-card.is-expanded {
-  box-shadow: 0 8px 24px rgba(26,26,26,0.10);
+  border-left-color: #639922;
+  background: #f5fbee;
 }
 
 .admin-payroll-item-card__name { font-size: 0.95rem; font-weight: 700; color: var(--c-text-primary); margin: 0; }
@@ -1955,10 +1989,26 @@ pre {
 }
 
 .admin-payroll-detail-card {
-  background: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.80);
   border-radius: 10px;
   padding: 0.85rem 0.9rem;
+  border: 0.5px solid rgba(26,26,26,0.09);
+  border-left: 4px solid rgba(138,128,120,0.25);
 }
+
+.admin-payroll-detail-card--earnings {
+  background: #EAF3DE;
+  border-color: #97C459;
+  border-left-color: #639922;
+}
+.admin-payroll-detail-card--earnings .admin-payroll-detail-card__title { color: #3B6D11; }
+
+.admin-payroll-detail-card--deduction {
+  background: #FAEEDA;
+  border-color: #EF9F27;
+  border-left-color: #BA7517;
+}
+.admin-payroll-detail-card--deduction .admin-payroll-detail-card__title { color: #854F0B; }
 
 .admin-payroll-detail-card__title {
   margin: 0 0 0.6rem;
