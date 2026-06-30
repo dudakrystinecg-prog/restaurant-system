@@ -4412,6 +4412,10 @@ function AdminView() {
                 >
                   Next
                 </button>
+                <span className="cr-toolbar-divider" />
+                <button className={`admin-button admin-button--compact ${openOnly ? "admin-button--primary" : "admin-button--secondary"}`} onClick={() => setOpenOnly(o => !o)}>Open only</button>
+                <button onClick={() => { setPage(1); setPageSize(DEFAULT_PAGE_SIZE); setFilters({ employeeId: "", start: "", end: "", recordStatus: "active" }); setOpenOnly(false); }} className="admin-button admin-button--secondary admin-button--compact">Clear</button>
+                <button onClick={handleExport} className="admin-button admin-button--success admin-button--compact">Export CSV</button>
               </div>
 
               <div className="admin-filters-grid clock-filter-grid">
@@ -4432,11 +4436,6 @@ function AdminView() {
                   <option value="deleted">Deleted</option>
                   <option value="all">All</option>
                 </select>
-                <div className="admin-actions-row">
-                  <button className={`admin-button admin-button--compact ${openOnly ? "admin-button--primary" : "admin-button--secondary"}`} onClick={() => setOpenOnly(o => !o)} title="Show only open check-ins">Open only</button>
-                  <button onClick={() => { setPage(1); setPageSize(DEFAULT_PAGE_SIZE); setFilters({ employeeId: "", start: "", end: "", recordStatus: "active" }); setOpenOnly(false); }} className="admin-button admin-button--secondary">Clear</button>
-                  <button onClick={handleExport} className="admin-button admin-button--success">Export CSV</button>
-                </div>
               </div>
 
               <p className="cr-chip-label">Filter by employee</p>
