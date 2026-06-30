@@ -1148,6 +1148,11 @@ app.post("/api/admin/payrolls/generate", requireAdminAuth, (req, res) => {
       return res.status(409).json({ error: error.message });
     }
 
+    console.error("[payroll/generate] Unexpected error:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+    });
     return res.status(500).json({
       error: "Erro ao gerar payroll.",
     });
