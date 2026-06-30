@@ -2328,18 +2328,6 @@ function deleteManualTimeRecord(recordId, adminUser = null) {
     return null;
   }
 
-  const validation = validateManualRecordChange({
-    employeeId: existingRecord.employee_id,
-    recordId,
-    mode: "delete",
-  });
-
-  if (!validation.valid) {
-    const error = new Error(validation.error);
-    error.code = "INVALID_SEQUENCE";
-    throw error;
-  }
-
   const timestamp = new Date().toISOString();
   db.prepare(
     `
