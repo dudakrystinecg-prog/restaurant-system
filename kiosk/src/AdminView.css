@@ -3956,6 +3956,392 @@ textarea {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   Phase 4 — Messages / Staff Email UI redesign
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Outer wrapper ────────────────────────────────────────────── */
+.msg-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Alert strip ──────────────────────────────────────────────── */
+.admin-alert.msg-alert {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.1rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.admin-alert--success.msg-alert {
+  background: rgba(30,150,90,0.08);
+  border-color: rgba(30,150,90,0.20);
+  color: #1A6B40;
+}
+
+.admin-alert--error.msg-alert {
+  background: rgba(204,32,32,0.07);
+  border-color: rgba(204,32,32,0.16);
+  color: #8A1010;
+}
+
+/* ── Compose panel ────────────────────────────────────────────── */
+.msg-compose-panel {
+  padding: 1.5rem;
+}
+
+.msg-compose-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 1.1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--ds-border);
+}
+
+/* ── Two-column layout ────────────────────────────────────────── */
+.msg-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* ── Recipients panel (left column) ──────────────────────────── */
+.msg-recipients-panel {
+  background: rgba(26,26,26,0.025);
+  border: 1px solid rgba(26,26,26,0.09);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.msg-recipients-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.63rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--c-text-muted);
+  background: rgba(26,26,26,0.04);
+  border-bottom: 1px solid rgba(26,26,26,0.08);
+}
+
+.msg-recipients-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(200,168,112,0.18);
+  color: #6A4A10;
+  border: 1px solid rgba(200,168,112,0.30);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ── Recipient row list ───────────────────────────────────────── */
+.msg-recipients-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.msg-recipient-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(26,26,26,0.05);
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.msg-recipient-row:last-child {
+  border-bottom: none;
+}
+
+.msg-recipient-row:hover {
+  background: rgba(255,255,255,0.70);
+}
+
+.msg-recipient-row.is-selected {
+  background: rgba(200,168,112,0.10);
+}
+
+.msg-recipient-row.is-selected:hover {
+  background: rgba(200,168,112,0.16);
+}
+
+/* "All staff" row — slightly bolder */
+.msg-recipient-row--all {
+  font-weight: 700;
+  border-bottom: 1px solid rgba(26,26,26,0.10) !important;
+  background: rgba(255,255,255,0.50);
+}
+
+.msg-recipient-row--all.is-selected {
+  background: rgba(200,168,112,0.12);
+}
+
+.msg-recipient-row__name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--c-text-primary);
+  line-height: 1.2;
+}
+
+.msg-recipient-row__email {
+  font-size: 0.70rem;
+  color: var(--c-text-muted);
+  margin-top: 1px;
+}
+
+.msg-recipient-row input[type="checkbox"] {
+  accent-color: var(--c-wood);
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Empty / note states inside recipient panel ───────────────── */
+.msg-recipients-empty {
+  padding: 1.25rem 1rem;
+  font-size: 0.8rem;
+  color: var(--c-text-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.msg-recipients-note {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.70rem;
+  color: var(--c-text-muted);
+  border-top: 1px solid rgba(26,26,26,0.08);
+  background: rgba(26,26,26,0.02);
+  line-height: 1.4;
+}
+
+/* ── Composer (right column) ──────────────────────────────────── */
+.msg-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ── Section label (Attachments etc.) ────────────────────────── */
+.msg-section-label {
+  font-size: 0.63rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--c-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+/* ── Attachment zone ──────────────────────────────────────────── */
+.msg-attach-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-attach-zone {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  border: 1.5px dashed rgba(138,128,120,0.35);
+  font-size: 0.80rem;
+  color: var(--c-text-muted);
+  background: rgba(74,64,64,0.03);
+  transition: border-color 0.13s, background 0.13s, color 0.13s;
+  align-self: flex-start;
+  font-family: inherit;
+}
+
+.msg-attach-zone:hover {
+  border-color: var(--c-wood);
+  background: rgba(200,168,112,0.06);
+  color: var(--c-text-secondary);
+}
+
+/* ── Attachment chips ─────────────────────────────────────────── */
+.msg-attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.msg-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.22rem 0.65rem;
+  border-radius: 99px;
+  background: rgba(26,26,26,0.07);
+  border: 1px solid rgba(26,26,26,0.10);
+  font-size: 0.75rem;
+  color: var(--c-text-primary);
+  font-weight: 500;
+}
+
+.msg-attach-chip__remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--c-text-muted);
+  padding: 0;
+  line-height: 1;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  transition: color 0.12s;
+}
+
+.msg-attach-chip__remove:hover {
+  color: var(--c-red);
+}
+
+/* ── BCC row ──────────────────────────────────────────────────── */
+.msg-bcc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+  font-size: 0.83rem;
+  color: var(--c-text-secondary);
+  font-weight: 500;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(26,26,26,0.03);
+  border: 1px solid rgba(26,26,26,0.07);
+  user-select: none;
+  transition: background 0.12s;
+  align-self: flex-start;
+}
+
+.msg-bcc-row:hover {
+  background: rgba(26,26,26,0.06);
+}
+
+.msg-bcc-row input[type="checkbox"] {
+  accent-color: var(--c-wood);
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Actions row ──────────────────────────────────────────────── */
+.msg-actions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.85rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--ds-border);
+}
+
+.msg-actions-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* ── Selected recipients summary strip ────────────────────────── */
+.msg-send-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  background: rgba(200,168,112,0.07);
+  border: 1px solid rgba(200,168,112,0.20);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+.msg-send-summary__label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--c-wood);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.msg-send-summary__names {
+  color: var(--c-text-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Send button — larger primary ─────────────────────────────── */
+.msg-send-btn {
+  min-width: 180px;
+  justify-content: center;
+}
+
+/* ── Sent history panel ───────────────────────────────────────── */
+.msg-history-panel {
+  padding: 1.5rem;
+}
+
+.msg-history-header {
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.msg-history-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--c-text-muted);
+  font-style: italic;
+}
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 820px) {
+  .msg-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .msg-recipients-list {
+    max-height: 240px;
+  }
+
+  .msg-send-btn {
+    width: 100%;
+  }
+
+  .msg-actions-buttons {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .msg-send-summary__names {
+    white-space: normal;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
    Phase 3 — Employees UI redesign
    ══════════════════════════════════════════════════════════════ */
 

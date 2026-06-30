@@ -1829,60 +1829,70 @@ function MessagesView({ adminFetch, employees }) {
     setTimeout(() => setDraftStatus(""), 3000);
   };
 
+  const noEmailCount = (employees || []).filter(e => e.is_active_employee !== 0 && !e.email).length;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-      {error && <div className="admin-alert admin-alert--error">{error}</div>}
-      {draftStatus && <div className="admin-alert admin-alert--success">{draftStatus}</div>}
+    <div className="msg-view">
+      {error && <div className="admin-alert admin-alert--error msg-alert">{error}</div>}
+      {draftStatus && <div className="admin-alert admin-alert--success msg-alert">{draftStatus}</div>}
       {result && (
-        <div className="admin-alert admin-alert--success">
-          Sent to {result.sent} employee{result.sent !== 1 ? "s" : ""}{result.failed > 0 ? ` · ${result.failed} failed` : ""}.
+        <div className="admin-alert admin-alert--success msg-alert">
+          {result.sent > 0 ? `✓ Sent to ${result.sent} employee${result.sent !== 1 ? "s" : ""}` : ""}
+          {result.failed > 0 ? ` · ${result.failed} failed` : ""}
         </div>
       )}
 
-      <div className="admin-panel">
-        <div className="admin-team-toolbar" style={{ marginBottom: "1.25rem" }}>
-          <div className="admin-team-toolbar__left">
+      <div className="admin-panel msg-compose-panel">
+        <div className="msg-compose-header">
+          <div>
             <h2 className="admin-panel__title">New Message</h2>
+            <p className="admin-panel__subtitle" style={{ marginTop: 2 }}>Compose and send an email to selected staff members.</p>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "1.5rem", alignItems: "start" }}>
+        <div className="msg-layout">
           {/* Recipients */}
-          <div>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-text-muted)", marginBottom: "0.6rem" }}>
-              Recipients
+          <div className="msg-recipients-panel">
+            <div className="msg-recipients-label">
+              <span>Recipients</span>
+              {selectedIds.length > 0 && (
+                <span className="msg-recipients-count">{selectedIds.length} selected</span>
+              )}
             </div>
-            <div className="cr-emp-chips">
+            <div className="msg-recipients-list">
               <div
-                className={`cr-emp-chip ${allSelected ? "cr-emp-chip--active" : ""}`}
+                className={`msg-recipient-row msg-recipient-row--all ${allSelected ? "is-selected" : ""}`}
                 onClick={toggleAll}
               >
-                <input type="checkbox" readOnly checked={allSelected} style={{ pointerEvents: "none" }} />
-                <span className="cr-emp-chip__name">Select all ({employeesWithEmail.length})</span>
+                <input type="checkbox" readOnly checked={allSelected} style={{ pointerEvents: "none", flexShrink: 0 }} />
+                <span className="msg-recipient-row__name">All staff ({employeesWithEmail.length})</span>
               </div>
               {employeesWithEmail.map(e => (
                 <div
                   key={e.id}
-                  className={`cr-emp-chip ${selectedIds.includes(e.id) ? "cr-emp-chip--active" : ""}`}
+                  className={`msg-recipient-row ${selectedIds.includes(e.id) ? "is-selected" : ""}`}
                   onClick={() => toggleOne(e.id)}
                 >
-                  <input type="checkbox" readOnly checked={selectedIds.includes(e.id)} style={{ pointerEvents: "none" }} />
-                  <div>
-                    <div className="cr-emp-chip__name">{e.name}</div>
-                    <div className="cr-emp-chip__hours">{e.email}</div>
+                  <input type="checkbox" readOnly checked={selectedIds.includes(e.id)} style={{ pointerEvents: "none", flexShrink: 0 }} />
+                  <div className="msg-recipient-row__info">
+                    <div className="msg-recipient-row__name">{e.name}</div>
+                    <div className="msg-recipient-row__email">{e.email}</div>
                   </div>
                 </div>
               ))}
               {employeesWithEmail.length === 0 && (
-                <div style={{ padding: "0.75rem", fontSize: "0.8rem", color: "var(--c-text-muted)", textAlign: "center" }}>
-                  No employees with email registered.
-                </div>
+                <div className="msg-recipients-empty">No staff have an email address registered.</div>
               )}
             </div>
+            {noEmailCount > 0 && (
+              <div className="msg-recipients-note">
+                {noEmailCount} staff member{noEmailCount !== 1 ? "s have" : " has"} no email and cannot receive messages.
+              </div>
+            )}
           </div>
 
-          {/* Message */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* Composer */}
+          <div className="msg-composer">
             <label className="admin-field">
               <span className="admin-field__label">Subject</span>
               <input className="admin-input" value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Schedule update for next week" />
@@ -1893,57 +1903,67 @@ function MessagesView({ adminFetch, employees }) {
               <textarea className="admin-input admin-textarea" rows={8} value={body} onChange={e => setBody(e.target.value)} placeholder="Write your message here..." />
             </label>
 
-            <div>
-              <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-text-muted)", marginBottom: "0.5rem" }}>Attachments</div>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", padding: "0.4rem 0.85rem", borderRadius: 8, border: "1.5px dashed rgba(138,128,120,0.35)", fontSize: "0.82rem", color: "var(--c-text-muted)", background: "rgba(74,64,64,0.03)" }}>
+            <div className="msg-attach-section">
+              <div className="msg-section-label">Attachments</div>
+              <label className="msg-attach-zone">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 Attach file
                 <input type="file" multiple style={{ display: "none" }} onChange={e => setAttachments(prev => [...prev, ...Array.from(e.target.files)])} />
               </label>
               {attachments.length > 0 && (
-                <div style={{ marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                <div className="msg-attach-chips">
                   {attachments.map((f, i) => (
-                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", padding: "0.2rem 0.6rem", borderRadius: 20, background: "rgba(74,64,64,0.07)", fontSize: "0.78rem", color: "var(--c-text-primary)" }}>
+                    <span key={i} className="msg-attach-chip">
                       {f.name}
-                      <button onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-text-muted)", padding: 0, lineHeight: 1, fontSize: "1rem" }}>×</button>
+                      <button onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))} className="msg-attach-chip__remove">×</button>
                     </span>
                   ))}
                 </div>
               )}
             </div>
 
-            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+            <label className="msg-bcc-row">
               <input type="checkbox" checked={bccSelf} onChange={e => setBccSelf(e.target.checked)} />
-              <span style={{ fontSize: "0.85rem", color: "var(--c-text-secondary)" }}>BCC me on this message</span>
+              <span>BCC me on this message</span>
             </label>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
-              <button
-                className="admin-button admin-button--secondary"
-                onClick={handleSaveDraft}
-                disabled={!subject.trim() && !body.trim()}
-              >
-                Save draft
-              </button>
-              <button
-                className="admin-button admin-button--primary"
-                onClick={handleSend}
-                disabled={sending || selectedIds.length === 0}
-              >
-                {sending ? "Sending..." : `Send to ${selectedIds.length} recipient${selectedIds.length !== 1 ? "s" : ""}`}
-              </button>
+            <div className="msg-actions-row">
+              {selectedIds.length > 0 && (
+                <div className="msg-send-summary">
+                  <span className="msg-send-summary__label">To:</span>
+                  <span className="msg-send-summary__names">
+                    {selectedIds.map(id => employeesWithEmail.find(e => e.id === id)?.name).filter(Boolean).join(" · ")}
+                  </span>
+                </div>
+              )}
+              <div className="msg-actions-buttons">
+                <button
+                  className="admin-button admin-button--secondary"
+                  onClick={handleSaveDraft}
+                  disabled={!subject.trim() && !body.trim()}
+                >
+                  Save draft
+                </button>
+                <button
+                  className="admin-button admin-button--primary msg-send-btn"
+                  onClick={handleSend}
+                  disabled={sending || selectedIds.length === 0}
+                >
+                  {sending ? "Sending…" : selectedIds.length === 0 ? "Select recipients to send" : `Send to ${selectedIds.length} recipient${selectedIds.length !== 1 ? "s" : ""}`}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-      <div className="admin-panel">
-        <div className="admin-team-toolbar" style={{ marginBottom: "1rem" }}>
-          <div className="admin-team-toolbar__left">
-            <h2 className="admin-panel__title">Sent History</h2>
-          </div>
+
+      <div className="admin-panel msg-history-panel">
+        <div className="msg-history-header">
+          <h2 className="admin-panel__title">Sent this session</h2>
+          <p className="admin-panel__subtitle" style={{ marginTop: 2 }}>History resets when you log out or reload the page.</p>
         </div>
         {sentHistory.length === 0 ? (
-          <div className="admin-empty-state">No messages sent in this session.</div>
+          <div className="msg-history-empty">No messages sent yet in this session.</div>
         ) : (
           <div className="admin-table-wrap">
             <table className="admin-data-table">
