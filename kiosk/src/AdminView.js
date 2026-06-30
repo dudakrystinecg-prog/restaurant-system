@@ -3411,7 +3411,11 @@ function AdminView() {
         {activeSection === "employees" ? (
           <div className="admin-panel">
             {isEmployeeCreateOpen ? (
-              <div style={{ marginBottom: "1.5rem" }}>
+              <div className="admin-employee-create-card">
+                <div className="admin-employee-create-card__header">
+                  <h3 className="admin-employee-create-card__title">New employee</h3>
+                  <p className="admin-employee-create-card__subtitle">Fill in the details below to add a new team member.</p>
+                </div>
               <form onSubmit={handleCreateEmployee} className="admin-form-stack admin-employee-create-drawer">
                 <label className="admin-field">
                   <span className="admin-field__label">Employee name</span>
@@ -3657,11 +3661,11 @@ function AdminView() {
                     return [
                       <tr
                         key={`emp-${employee.id}`}
-                        className={`emp-table__row ${isSelected ? "is-selected" : ""}`}
+                        className={`emp-table__row ${isSelected ? "is-selected" : ""} ${!employee.is_active_employee ? "is-former" : ""}`}
                       >
                         <td>
                           <div className="emp-table__name-cell">
-                            <div className="emp-table__avatar">{initial}</div>
+                            <div className={`emp-table__avatar${!employee.is_active_employee ? " emp-table__avatar--former" : ""}`}>{initial}</div>
                             <div className="emp-table__name-stack">
                               <span className="emp-table__name">{employee.name}</span>
                               <span className="emp-table__email">{isSalaried ? "Salaried employee" : "Hourly employee"}</span>
@@ -3673,7 +3677,7 @@ function AdminView() {
                             {(draft.is_active_employee !== undefined ? draft.is_active_employee : employee.is_active_employee) ? "Current" : "Former"}
                           </span>
                           {!(draft.show_in_kiosk !== undefined ? draft.show_in_kiosk : employee.show_in_kiosk) && (
-                            <span className="emp-status-badge emp-status-badge--inactive" style={{ marginLeft: 4 }}>Hidden from kiosk</span>
+                            <span className="emp-kiosk-badge emp-kiosk-badge--hidden">Hidden</span>
                           )}
                         </td>
                         <td className="emp-table__data">
